@@ -257,22 +257,22 @@ async function boot() {
         // wait briefly for welcome
         await new Promise((r) => setTimeout(r, 80));
       }
-      if (intent === "join" || state.joinMode) {
-        let joinCode = ($("join-code").value || pathCode()).trim().toUpperCase();
-        if (intent === "join" && !joinCode) {
-          state.joinMode = true;
-          $("join-code-wrap").classList.remove("hidden");
-          $("join-code").focus();
-          return;
-        }
-        if (!joinCode) {
-          showHomeError("Enter a game code");
-          return;
-        }
-        send({ type: "join_game", code: joinCode, name });
-      } else {
+      if (intent === "create") {
+        state.joinMode = false;
         send({ type: "create_game", name });
+        return;
       }
+
+      // Join — use form code, or code from /g/URL when opened via invite
+      let joinCode = ($("join-code").value || pathCode()).trim().toUpperCase();
+      if (!joinCode) {
+        state.joinMode = true;
+        $("join-code-wrap").classList.remove("hidden");
+        $("join-code").focus();
+        showHomeError("Enter a game code");
+        return;
+      }
+      send({ type: "join_game", code: joinCode, name });
     } catch (err) {
       showHomeError(err.message || "Connection failed");
     }
