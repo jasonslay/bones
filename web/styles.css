@@ -211,6 +211,10 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 }
 
 .game-settings summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
   cursor: pointer;
   list-style: none;
   font-family: var(--font-brand);
@@ -220,20 +224,26 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   color: var(--ivory);
   border: 2px solid var(--ivory-dim);
   padding: 0.45rem 0.9rem;
-  text-align: center;
 }
 
-.game-settings summary::-webkit-details-marker {
+.game-settings summary::-webkit-details-marker,
+.game-settings summary::marker {
   display: none;
+  content: none;
 }
 
 .game-settings summary::after {
-  content: " ▾";
-  font-size: 0.8em;
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 0.32em solid transparent;
+  border-right: 0.32em solid transparent;
+  border-top: 0.38em solid currentColor;
+  transform-origin: 50% 45%;
 }
 
 .game-settings[open] summary::after {
-  content: " ▴";
+  transform: rotate(180deg);
 }
 
 .game-settings-panel {
