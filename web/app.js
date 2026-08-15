@@ -209,6 +209,7 @@ function onServer(msg) {
       applyInvite(msg.code, msg.invite_path);
       localStorage.setItem("bones-room", msg.code);
       renderGame();
+      renderTimer();
       break;
     default:
       break;
@@ -236,13 +237,15 @@ function renderGame() {
   for (const p of g.players) {
     const chip = document.createElement("div");
     chip.className = "player-chip";
-    if (p.id === g.current_player_id) chip.classList.add("active");
+    if (p.id === g.current_player_id && !p.forfeited) chip.classList.add("active");
     if (!p.on_board) chip.classList.add("off-board");
+    if (p.forfeited) chip.classList.add("forfeited");
     const you = p.id === g.you_are ? " (you)" : "";
     chip.innerHTML = `
       <span class="pname">${escapeHtml(p.name)}${you}</span>
       <span class="pscore">${p.score}</span>
-      ${p.on_board ? "" : '<span class="badge">off board</span>'}
+      ${p.forfeited ? '<span class="badge forfeit">forfeited</span>' : ""}
+      ${p.on_board || p.forfeited ? "" : '<span class="badge">off board</span>'}
       ${!p.connected ? '<span class="badge">away</span>' : ""}
       ${g.winner_id === p.id ? '<span class="badge">winner</span>' : ""}
     `;
@@ -380,6 +383,13 @@ function renderActions(g) {
         send({ type: "end_game" });
         return;
       }
+      if (type === "forfeit") {
+        if (!window.confirm("Forfeit this game? You will be out for the rest of the match.")) {
+          return;
+        }
+        send({ type: "forfeit" });
+        return;
+      }
       const indices = [...state.selected].sort((a, b) => a - b);
       if (type === "roll" || type === "bank") {
         send({ type, indices });
@@ -408,6 +418,14 @@ function renderActions(g) {
     return;
   }
 
+  const me = g.players.find((p) => p.id === g.you_are);
+  if (me?.forfeited) {
+    const wait = document.createElement("p");
+    wait.textContent = "You forfeited — watching.";
+    root.appendChild(wait);
+    return;
+  }
+
   if (g.phase === "steal_window") {
     if (g.steal_available) {
       add("Steal!", "steal");
@@ -433,6 +451,23 @@ function renderActions(g) {
   if (g.you_are === g.host_id) {
     add("End game", "end_game", { className: "danger" });
   }
+  add("Forfeit", "forfeit", { className: "ghost" });
+}
+
+function renderTimer() {
+  const el = $("turn-timer");
+  if (!el) return;
+  const g = state.game;
+  if (!g || !g.action_deadline_ms || (g.phase !== "playing" && g.phase !== "steal_window")) {
+    el.classList.add("hidden");
+    return;
+  }
+  const secs = Math.max(0, Math.ceil((g.action_deadline_ms - Date.now()) / 1000));
+  const m = Math.floor(secs / 60);
+  const s = String(secs % 60).padStart(2, "0");
+  el.classList.remove("hidden");
+  el.classList.toggle("urgent", secs <= 15);
+  el.textContent = g.you_can_act ? `Play within ${m}:${s}` : `Turn timer ${m}:${s}`;
 }
 
 function escapeHtml(s) {
@@ -501,6 +536,8 @@ async function boot() {
       toast("Select and copy the invite link");
     }
   });
+
+  setInterval(renderTimer, 250);
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.game?.code) {

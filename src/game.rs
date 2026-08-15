@@ -1,11 +1,12 @@
 use crate::protocol::{
-    BOARD_THRESHOLD, DICE_COUNT, GamePhase, GameView, PendingBankView, PlayerView, WIN_SCORE,
-    invite_path,
+    ACTION_TIMEOUT_MS, BOARD_THRESHOLD, DICE_COUNT, GamePhase, GameView, PendingBankView,
+    PlayerView, WIN_SCORE, invite_path,
 };
 use crate::scoring::{has_any_score, score_dice, score_held};
 use bevy::prelude::*;
 use rand::RngExt;
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 #[derive(Resource, Default)]
@@ -30,6 +31,7 @@ pub struct Room {
     pub pending_bank: Option<PendingBank>,
     pub winner_id: Option<Uuid>,
     pub status_message: String,
+    pub action_deadline_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +42,7 @@ pub struct Player {
     pub score: u32,
     pub on_board: bool,
     pub connected: bool,
+    pub forfeited: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +65,19 @@ fn roll_n(n: usize) -> Vec<u8> {
     (0..n).map(|_| rng.random_range(1..=6)).collect()
 }
 
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForfeitCause {
+    Manual,
+    Timeout,
+}
+
 impl Room {
     pub fn new(code: String, host: Player) -> Self {
         Self {
@@ -79,6 +95,7 @@ impl Room {
             pending_bank: None,
             winner_id: None,
             status_message: "Waiting for players… share the invite link.".into(),
+            action_deadline_ms: None,
         }
     }
 
@@ -99,11 +116,41 @@ impl Room {
     }
 
     pub fn next_player_index(&self) -> usize {
-        if self.players.is_empty() {
-            0
-        } else {
-            (self.turn_index + 1) % self.players.len()
+        let n = self.players.len();
+        if n == 0 {
+            return 0;
         }
+        for step in 1..=n {
+            let idx = (self.turn_index + step) % n;
+            if !self.players[idx].forfeited {
+                return idx;
+            }
+        }
+        self.turn_index
+    }
+
+    fn active_count(&self) -> usize {
+        self.players.iter().filter(|p| !p.forfeited).count()
+    }
+
+    pub fn acting_player_id(&self) -> Option<Uuid> {
+        match self.phase {
+            GamePhase::Playing => self.current_player().filter(|p| !p.forfeited).map(|p| p.id),
+            GamePhase::StealWindow => self
+                .players
+                .get(self.next_player_index())
+                .filter(|p| !p.forfeited)
+                .map(|p| p.id),
+            GamePhase::Lobby | GamePhase::Finished => None,
+        }
+    }
+
+    fn set_action_deadline(&mut self) {
+        self.action_deadline_ms = Some(now_ms().saturating_add(ACTION_TIMEOUT_MS));
+    }
+
+    fn clear_action_deadline(&mut self) {
+        self.action_deadline_ms = None;
     }
 
     fn turn_hint(on_board: bool) -> &'static str {
@@ -143,21 +190,25 @@ impl Room {
     }
 
     pub fn view_for(&self, you: Uuid) -> GameView {
+        let you_forfeited = self
+            .player_index(you)
+            .is_some_and(|i| self.players[i].forfeited);
         let steal_available = matches!(self.phase, GamePhase::StealWindow)
             && self.pending_bank.as_ref().is_some_and(|p| p.leftover > 0)
             && self
                 .players
                 .get(self.next_player_index())
-                .is_some_and(|p| p.id == you && p.on_board);
+                .is_some_and(|p| p.id == you && p.on_board && !p.forfeited);
 
-        let you_can_act = match self.phase {
-            GamePhase::Lobby => you == self.host_id && self.players.len() >= 2,
-            GamePhase::Playing => {
-                self.current_player().is_some_and(|p| p.id == you) && self.winner_id.is_none()
-            }
-            GamePhase::StealWindow => steal_available,
-            GamePhase::Finished => you == self.host_id,
-        };
+        let you_can_act = !you_forfeited
+            && match self.phase {
+                GamePhase::Lobby => you == self.host_id && self.players.len() >= 2,
+                GamePhase::Playing => {
+                    self.current_player().is_some_and(|p| p.id == you) && self.winner_id.is_none()
+                }
+                GamePhase::StealWindow => steal_available,
+                GamePhase::Finished => you == self.host_id,
+            };
 
         GameView {
             code: self.code.clone(),
@@ -172,6 +223,7 @@ impl Room {
                     score: p.score,
                     on_board: p.on_board,
                     connected: p.connected,
+                    forfeited: p.forfeited,
                 })
                 .collect(),
             current_player_id: self.current_player().map(|p| p.id),
@@ -191,6 +243,7 @@ impl Room {
             you_can_act,
             message: self.status_message.clone(),
             winner_id: self.winner_id,
+            action_deadline_ms: self.action_deadline_ms,
         }
     }
 
@@ -204,6 +257,7 @@ impl Room {
         self.phase = GamePhase::Playing;
         self.turn_index = 0;
         self.reset_turn_state();
+        self.set_action_deadline();
         let name = self
             .current_player()
             .map(|p| p.name.clone())
@@ -242,6 +296,7 @@ impl Room {
                 self.status_message = next;
             }
         }
+        self.set_action_deadline();
     }
 
     fn dice_to_roll(&self) -> usize {
@@ -292,6 +347,7 @@ impl Room {
             if outcome.auto_win {
                 self.winner_id = Some(player_id);
                 self.phase = GamePhase::Finished;
+                self.clear_action_deadline();
                 let name = self
                     .current_player()
                     .map(|p| p.name.clone())
@@ -303,6 +359,7 @@ impl Room {
         }
 
         self.status_message = "Select scoring dice, then roll again or bank".into();
+        self.set_action_deadline();
         Ok(())
     }
 
@@ -324,6 +381,7 @@ impl Room {
         if outcome.auto_win {
             self.winner_id = Some(player_id);
             self.phase = GamePhase::Finished;
+            self.clear_action_deadline();
             let name = self
                 .current_player()
                 .map(|p| p.name.clone())
@@ -351,6 +409,7 @@ impl Room {
                 outcome.points, self.turn_points
             );
         }
+        self.set_action_deadline();
         Ok(())
     }
 
@@ -403,6 +462,7 @@ impl Room {
             player.score = WIN_SCORE;
             self.winner_id = Some(player_id);
             self.phase = GamePhase::Finished;
+            self.clear_action_deadline();
             self.status_message = format!("{name} hits exactly {WIN_SCORE} and wins!");
             return Ok(());
         }
@@ -420,6 +480,7 @@ impl Room {
             self.phase = GamePhase::StealWindow;
             self.status_message =
                 format!("{name} banks {points} with {leftover} dice left. {next_name} may steal!");
+            self.set_action_deadline();
             Ok(())
         } else {
             let player = self.current_player_mut().unwrap();
@@ -490,6 +551,7 @@ impl Room {
             if outcome.auto_win {
                 self.winner_id = Some(player_id);
                 self.phase = GamePhase::Finished;
+                self.clear_action_deadline();
                 self.status_message =
                     format!("{name} stole and rolled five of a kind — automatic win!");
                 return Ok(());
@@ -500,6 +562,7 @@ impl Room {
             "{name} steals with {} pending! Select scoring dice.",
             self.turn_points
         );
+        self.set_action_deadline();
         Ok(())
     }
 
@@ -514,7 +577,7 @@ impl Room {
     fn leader_id(&self) -> Option<Uuid> {
         let mut best: Option<u32> = None;
         let mut leaders = Vec::new();
-        for p in self.players.iter().filter(|p| p.on_board) {
+        for p in self.players.iter().filter(|p| p.on_board && !p.forfeited) {
             match best {
                 None => {
                     best = Some(p.score);
@@ -544,6 +607,7 @@ impl Room {
         }
         self.apply_pending_bank();
         self.phase = GamePhase::Finished;
+        self.clear_action_deadline();
         self.winner_id = self.leader_id();
         self.status_message = match self.winner_id.and_then(|id| {
             self.players
@@ -564,14 +628,95 @@ impl Room {
         for p in &mut self.players {
             p.score = 0;
             p.on_board = false;
+            p.forfeited = false;
         }
         self.winner_id = None;
         self.pending_bank = None;
         self.phase = GamePhase::Lobby;
         self.turn_index = 0;
         self.reset_turn_state();
+        self.clear_action_deadline();
         self.status_message = "Rematch lobby — host can start when ready".into();
         Ok(())
+    }
+
+    pub fn forfeit(&mut self, player_id: Uuid, cause: ForfeitCause) -> Result<(), String> {
+        if !matches!(self.phase, GamePhase::Playing | GamePhase::StealWindow) {
+            return Err("Game is not in progress".into());
+        }
+        let idx = self
+            .player_index(player_id)
+            .ok_or_else(|| "Not in this game".to_string())?;
+        if self.players[idx].forfeited {
+            return Err("Already forfeited".into());
+        }
+
+        let was_actor = self.acting_player_id() == Some(player_id);
+        let was_current = self.current_player().is_some_and(|p| p.id == player_id);
+        let in_steal = self.phase == GamePhase::StealWindow;
+        let name = self.players[idx].name.clone();
+        self.players[idx].forfeited = true;
+
+        if self.host_id == player_id {
+            if let Some(next) = self.players.iter().find(|p| !p.forfeited) {
+                self.host_id = next.id;
+            }
+        }
+
+        let reason = match cause {
+            ForfeitCause::Manual => format!("{name} forfeited."),
+            ForfeitCause::Timeout => format!("{name} forfeited — no play within 1 minute."),
+        };
+
+        if self.active_count() <= 1 {
+            self.apply_pending_bank();
+            self.phase = GamePhase::Finished;
+            self.clear_action_deadline();
+            self.winner_id = self.players.iter().find(|p| !p.forfeited).map(|p| p.id);
+            self.status_message = match self.winner_id.and_then(|id| {
+                self.players
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map(|p| (p.name.clone(), p.score))
+            }) {
+                Some((winner, score)) => format!("{reason} {winner} wins with {score}."),
+                None => format!("{reason} No winner."),
+            };
+            return Ok(());
+        }
+
+        if in_steal && was_actor {
+            self.apply_pending_bank();
+            self.begin_next_turn(false);
+            self.status_message = format!("{reason} {}", self.status_message);
+            return Ok(());
+        }
+
+        if was_current {
+            self.pending_bank = None;
+            self.begin_next_turn(false);
+            self.status_message = format!("{reason} {}", self.status_message);
+            return Ok(());
+        }
+
+        self.status_message = reason;
+        Ok(())
+    }
+
+    pub fn check_timeout(&mut self, now: u64) -> bool {
+        if !matches!(self.phase, GamePhase::Playing | GamePhase::StealWindow) {
+            return false;
+        }
+        let Some(deadline) = self.action_deadline_ms else {
+            return false;
+        };
+        if now < deadline {
+            return false;
+        }
+        let Some(actor) = self.acting_player_id() else {
+            return false;
+        };
+        self.forfeit(actor, ForfeitCause::Timeout).is_ok()
     }
 }
 
@@ -587,6 +732,7 @@ mod tests {
             score: 0,
             on_board: false,
             connected: true,
+            forfeited: false,
         }
     }
 
@@ -628,6 +774,7 @@ mod tests {
                 score: 500,
                 on_board: true,
                 connected: false,
+                forfeited: false,
             },
         );
         room.players.push(player("Guest"));
@@ -733,5 +880,124 @@ mod tests {
         let mut room = Room::new("LOBBY".into(), player("Host"));
         room.players.push(player("Guest"));
         assert!(room.end_game(room.host_id).is_err());
+    }
+
+    fn room_with_three() -> Room {
+        let mut room = Room::new("TEST3".into(), player("A"));
+        room.players.push(player("B"));
+        room.players.push(player("C"));
+        room.start().unwrap();
+        room
+    }
+
+    #[test]
+    fn player_can_forfeit_and_opponent_wins() {
+        let mut room = room_with_two();
+        let host = room.host_id;
+        let guest = room.players[1].id;
+        room.players[1].score = 800;
+        room.forfeit(host, ForfeitCause::Manual).unwrap();
+        assert!(room.players[0].forfeited);
+        assert_eq!(room.phase, GamePhase::Finished);
+        assert_eq!(room.winner_id, Some(guest));
+        assert_eq!(room.host_id, guest);
+        assert!(room.status_message.contains("forfeited"));
+        assert!(room.action_deadline_ms.is_none());
+    }
+
+    #[test]
+    fn cannot_forfeit_in_lobby() {
+        let mut room = Room::new("LOBBY".into(), player("Host"));
+        room.players.push(player("Guest"));
+        assert!(room.forfeit(room.host_id, ForfeitCause::Manual).is_err());
+    }
+
+    #[test]
+    fn forfeit_skips_remaining_turns() {
+        let mut room = room_with_three();
+        let a = room.players[0].id;
+        let b = room.players[1].id;
+        let c = room.players[2].id;
+        room.forfeit(b, ForfeitCause::Manual).unwrap();
+        assert_eq!(room.phase, GamePhase::Playing);
+        assert_eq!(room.current_player().unwrap().id, a);
+        room.players[0].on_board = true;
+        room.turn_points = 100;
+        room.awaiting_keep = false;
+        room.bank(a, vec![]).unwrap();
+        assert_eq!(room.phase, GamePhase::Playing);
+        assert_eq!(room.current_player().unwrap().id, c);
+    }
+
+    #[test]
+    fn host_forfeit_transfers_host() {
+        let mut room = room_with_three();
+        let a = room.host_id;
+        let b = room.players[1].id;
+        room.forfeit(a, ForfeitCause::Manual).unwrap();
+        assert_eq!(room.host_id, b);
+        assert_eq!(room.phase, GamePhase::Playing);
+        assert_eq!(room.current_player().unwrap().id, b);
+        assert!(room.players[0].forfeited);
+    }
+
+    #[test]
+    fn timeout_forfeits_acting_player() {
+        let mut room = room_with_two();
+        let guest = room.players[1].id;
+        room.action_deadline_ms = Some(now_ms().saturating_sub(1));
+        assert!(room.check_timeout(now_ms()));
+        assert!(room.players[0].forfeited);
+        assert_eq!(room.winner_id, Some(guest));
+        assert!(room.status_message.contains("1 minute"));
+    }
+
+    #[test]
+    fn playing_resets_the_action_deadline() {
+        let mut room = room_with_two();
+        let id = room.players[0].id;
+        room.action_deadline_ms = Some(now_ms() + 5_000);
+        room.dice = vec![1, 2, 3, 4, 6];
+        room.awaiting_keep = true;
+        room.keep(id, vec![0]).unwrap();
+        let deadline = room.action_deadline_ms.expect("deadline");
+        let now = now_ms();
+        assert!(deadline >= now + crate::protocol::ACTION_TIMEOUT_MS - 2_000);
+        assert!(deadline <= now + crate::protocol::ACTION_TIMEOUT_MS + 2_000);
+    }
+
+    #[test]
+    fn steal_timeout_applies_pending_bank() {
+        let mut room = room_with_three();
+        let a = room.players[0].id;
+        let b = room.players[1].id;
+        room.players[0].score = 1000;
+        room.players[0].on_board = true;
+        room.players[1].on_board = true;
+        room.pending_bank = Some(PendingBank {
+            player_id: a,
+            points: 350,
+            leftover: 2,
+        });
+        room.phase = GamePhase::StealWindow;
+        room.action_deadline_ms = Some(now_ms().saturating_sub(1));
+        assert_eq!(room.acting_player_id(), Some(b));
+        assert!(room.check_timeout(now_ms()));
+        assert!(room.players[1].forfeited);
+        assert_eq!(room.players[0].score, 1350);
+        assert_eq!(room.phase, GamePhase::Playing);
+        assert_eq!(room.current_player().unwrap().id, room.players[2].id);
+    }
+
+    #[test]
+    fn rematch_clears_forfeit() {
+        let mut room = room_with_three();
+        let a = room.host_id;
+        room.forfeit(room.players[1].id, ForfeitCause::Manual)
+            .unwrap();
+        room.phase = GamePhase::Finished;
+        room.rematch(a).unwrap();
+        assert!(room.players.iter().all(|p| !p.forfeited));
+        assert!(room.action_deadline_ms.is_none());
     }
 }

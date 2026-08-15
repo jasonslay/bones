@@ -26,8 +26,10 @@ pub struct BonesGamePlugin;
 
 impl Plugin for BonesGamePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<GameRooms>()
-            .add_systems(Update, process_net_commands);
+        app.init_resource::<GameRooms>().add_systems(
+            Update,
+            (process_net_commands, check_forfeit_timeouts).chain(),
+        );
     }
 }
 
@@ -67,6 +69,7 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
                 score: 0,
                 on_board: false,
                 connected: true,
+                forfeited: false,
             };
             let room = Room::new(code.clone(), player);
             let entity = world.spawn(room).id();
@@ -130,6 +133,11 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
         }
         ClientMessage::EndGame => {
             with_room_mut(world, channels, player_id, |room| room.end_game(player_id));
+        }
+        ClientMessage::Forfeit => {
+            with_room_mut(world, channels, player_id, |room| {
+                room.forfeit(player_id, crate::game::ForfeitCause::Manual)
+            });
         }
         ClientMessage::Rematch => {
             with_room_mut(world, channels, player_id, |room| room.rematch(player_id));
@@ -197,6 +205,7 @@ fn join_or_reclaim(
                     score: 0,
                     on_board: false,
                     connected: true,
+                    forfeited: false,
                 });
                 room.status_message = format!(
                     "{} joined — {} player(s).",
@@ -320,6 +329,29 @@ pub fn broadcast_room(world: &World, channels: &NetChannels, code: &str) {
     for pid in players {
         let view = room.view_for(pid);
         send(channels, pid, ServerMessage::State(view));
+    }
+}
+
+fn check_forfeit_timeouts(world: &mut World) {
+    let channels = world.resource::<NetChannels>().clone();
+    let now = crate::game::now_ms();
+    let rooms: Vec<(String, Entity)> = world
+        .resource::<GameRooms>()
+        .by_code
+        .iter()
+        .map(|(code, entity)| (code.clone(), *entity))
+        .collect();
+    let mut dirty = Vec::new();
+    for (code, entity) in rooms {
+        let Some(mut room) = world.get_mut::<Room>(entity) else {
+            continue;
+        };
+        if room.check_timeout(now) {
+            dirty.push(code);
+        }
+    }
+    for code in dirty {
+        broadcast_room(world, &channels, &code);
     }
 }
 

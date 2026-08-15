@@ -4,6 +4,7 @@ use uuid::Uuid;
 pub const WIN_SCORE: u32 = 10_000;
 pub const BOARD_THRESHOLD: u32 = 1_000;
 pub const DICE_COUNT: usize = 5;
+pub const ACTION_TIMEOUT_MS: u64 = 60_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -34,6 +35,7 @@ pub enum ClientMessage {
     Steal,
     DeclineSteal,
     EndGame,
+    Forfeit,
     Rematch,
 }
 
@@ -78,6 +80,7 @@ pub struct GameView {
     pub you_can_act: bool,
     pub message: String,
     pub winner_id: Option<Uuid>,
+    pub action_deadline_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +90,7 @@ pub struct PlayerView {
     pub score: u32,
     pub on_board: bool,
     pub connected: bool,
+    pub forfeited: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
