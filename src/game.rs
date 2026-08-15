@@ -2,7 +2,7 @@ use crate::protocol::{
     ACTION_TIMEOUT_MS, BOARD_THRESHOLD, DICE_COUNT, GamePhase, GameView, PendingBankView,
     PlayerView, WIN_SCORE, invite_path,
 };
-use crate::scoring::{has_any_score, score_dice, score_held};
+use crate::scoring::{can_keep_die, has_any_score, score_dice, score_held};
 use bevy::prelude::*;
 use rand::RngExt;
 use std::collections::HashMap;
@@ -323,6 +323,7 @@ impl Room {
         if unique.iter().any(|&i| i >= self.dice.len()) {
             return Err("Invalid die".into());
         }
+        unique.retain(|&i| can_keep_die(&self.dice, i));
         self.selected = unique;
         Ok(())
     }
@@ -1022,6 +1023,8 @@ mod tests {
         assert!(room.select(b, vec![2]).is_err());
         room.select(a, vec![]).unwrap();
         assert!(room.view_for(b).selected.is_empty());
+        room.select(a, vec![0, 2]).unwrap();
+        assert_eq!(room.selected, vec![0]);
     }
 
     #[test]

@@ -200,11 +200,12 @@ function onServer(msg) {
     case "state":
       {
         const facesKey = (msg.dice || []).join(",");
+        const kept = (msg.selected || []).filter((i) => canKeepDie(msg.dice || [], i));
         if (state._facesKey !== facesKey) {
-          state.selected = new Set(msg.selected || []);
+          state.selected = new Set(kept);
           state._facesKey = facesKey;
         } else if (!msg.you_can_act) {
-          state.selected = new Set(msg.selected || []);
+          state.selected = new Set(kept);
         }
       }
       state.game = msg;
@@ -322,13 +323,22 @@ function diceSelectable(g) {
   );
 }
 
+function canKeepDie(dice, index) {
+  const face = dice[index];
+  if (face === 1 || face === 5) return true;
+  if (face < 2 || face > 6) return false;
+  return dice.filter((f) => f === face).length >= 3;
+}
+
 function syncDieAppearance(g) {
   const selectable = diceSelectable(g);
   const root = $("dice");
   [...root.children].forEach((btn, i) => {
-    btn.classList.toggle("selected", state.selected.has(i));
+    const keepable = canKeepDie(g.dice, i);
+    btn.classList.toggle("selected", state.selected.has(i) && keepable);
     btn.classList.toggle("bust", !!g.bust);
-    btn.disabled = !selectable;
+    btn.classList.toggle("dead", !g.bust && !keepable);
+    btn.disabled = !selectable || !keepable;
   });
 }
 
@@ -354,7 +364,8 @@ function renderDice(g) {
       btn.addEventListener("click", () => {
         if (btn.disabled) return;
         if (state.selected.has(i)) state.selected.delete(i);
-        else state.selected.add(i);
+        else if (canKeepDie(g.dice, i)) state.selected.add(i);
+        else return;
         syncDieAppearance(state.game);
         renderActions(state.game);
         updateTurnScore(state.game);
