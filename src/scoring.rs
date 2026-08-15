@@ -186,6 +186,20 @@ pub fn has_any_score(dice: &[u8]) -> bool {
     (2..=6).any(|face| counts[face] >= 3)
 }
 
+/// A die can be kept if it is a 1 or 5, or its face has at least three showing.
+pub fn can_keep_die(dice: &[u8], index: usize) -> bool {
+    let Some(&face) = dice.get(index) else {
+        return false;
+    };
+    if face == 1 || face == 5 {
+        return true;
+    }
+    if !(2..=6).contains(&face) {
+        return false;
+    }
+    dice.iter().filter(|&&d| d == face).count() >= 3
+}
+
 pub fn score_selection(dice: &[u8], selected: &[usize]) -> Option<ScoreOutcome> {
     if selected.is_empty() {
         return None;
@@ -253,6 +267,18 @@ mod tests {
         assert!(score_selection(&[1, 2, 5], &[0, 2]).is_some());
         assert!(score_selection(&[1, 2, 5], &[0, 1]).is_none());
         assert!(score_selection(&[1, 2, 5], &[0, 0]).is_none());
+    }
+
+    #[test]
+    fn keepable_dice_are_ones_fives_or_n_of_a_kind() {
+        let dice = [1, 6, 6, 6, 2];
+        assert!(can_keep_die(&dice, 0));
+        assert!(can_keep_die(&dice, 1));
+        assert!(can_keep_die(&dice, 2));
+        assert!(can_keep_die(&dice, 3));
+        assert!(!can_keep_die(&dice, 4));
+        assert!(!can_keep_die(&[2, 3, 4, 6, 6], 0));
+        assert!(can_keep_die(&[5, 2, 3, 4, 6], 0));
     }
 
     #[test]
