@@ -10,13 +10,16 @@ const PIP_XY = {
 function dieFaceSvg(face) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 100 100");
+  svg.setAttribute("width", "100");
+  svg.setAttribute("height", "100");
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("focusable", "false");
   for (const [x, y] of PIP_XY[face] || []) {
     const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     c.setAttribute("cx", String(x));
     c.setAttribute("cy", String(y));
-    c.setAttribute("r", "10");
+    c.setAttribute("r", "11");
     svg.appendChild(c);
   }
   return svg;
@@ -274,7 +277,10 @@ function renderDice(g) {
     btn.dataset.face = String(face);
     btn.setAttribute("aria-label", `Die showing ${face}`);
     btn.disabled = !selectable;
-    btn.appendChild(dieFaceSvg(face));
+    const faceEl = document.createElement("span");
+    faceEl.className = "die-face";
+    faceEl.appendChild(dieFaceSvg(face));
+    btn.appendChild(faceEl);
     btn.addEventListener("click", () => {
       if (!selectable) return;
       if (state.selected.has(i)) state.selected.delete(i);

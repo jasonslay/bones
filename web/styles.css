@@ -251,42 +251,49 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   display: flex;
   flex-wrap: nowrap;
   justify-content: center;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--die-gap);
   width: 100%;
   max-width: 100%;
-  min-height: 0;
   margin-bottom: 1.25rem;
 }
 
 .die {
+  -webkit-appearance: none;
+  appearance: none;
   box-sizing: border-box;
-  flex: 0 0 auto;
-  width: min(4.6rem, calc((100% - 4 * var(--die-gap)) / 5));
-  aspect-ratio: 1;
+  flex: 1 1 0;
+  max-width: 4.8rem;
+  width: auto;
   height: auto;
   min-width: 0;
-  padding: 8%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  line-height: 0;
   border: none;
-  border-radius: 14%;
-  background: var(--ivory);
+  background: transparent;
   color: var(--ink);
   cursor: pointer;
-  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.12), 0 6px 14px var(--shadow);
   animation: die-land 0.35s cubic-bezier(0.2, 1.2, 0.4, 1) both;
 }
 
-.die svg {
-  width: 100%;
-  height: 100%;
+.die-face {
   display: block;
-  fill: var(--ink);
+  position: relative;
+  width: 100%;
+  padding-bottom: 100%;
+  background: var(--ivory);
+  border-radius: 16%;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.12), 0 6px 14px var(--shadow);
 }
 
-.die.selected svg {
+.die-face svg {
+  position: absolute;
+  top: 10%;
+  left: 10%;
+  width: 80%;
+  height: 80%;
   fill: var(--ink);
 }
 
@@ -300,7 +307,7 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   to { opacity: 1; transform: none; }
 }
 
-.die.selected {
+.die.selected .die-face {
   background: var(--gold);
   box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.45), 0 8px 18px var(--shadow);
 }
