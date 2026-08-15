@@ -234,19 +234,26 @@ function renderGame() {
   showScreen("game");
   applyInvite(g.code, g.invite_path);
   $("status").textContent = g.message || "";
+  renderTurnBanner(g);
 
+  const actor = actingPlayer(g);
   const board = $("scoreboard");
   board.innerHTML = "";
   for (const p of g.players) {
     const chip = document.createElement("div");
     chip.className = "player-chip";
-    if (p.id === g.current_player_id && !p.forfeited) chip.classList.add("active");
+    const isActing = !!(actor && p.id === actor.id && !p.forfeited);
+    if (isActing) chip.classList.add("active");
     if (!p.on_board) chip.classList.add("off-board");
     if (p.forfeited) chip.classList.add("forfeited");
     const you = p.id === g.you_are ? " (you)" : "";
+    const turnBadge = isActing
+      ? `<span class="badge turn">${g.phase === "steal_window" ? "steal" : "turn"}</span>`
+      : "";
     chip.innerHTML = `
       <span class="pname">${escapeHtml(p.name)}${you}</span>
       <span class="pscore">${p.score}</span>
+      ${turnBadge}
       ${p.forfeited ? '<span class="badge forfeit">forfeited</span>' : ""}
       ${p.on_board || p.forfeited ? "" : '<span class="badge">off board</span>'}
       ${!p.connected ? '<span class="badge">away</span>' : ""}
@@ -468,6 +475,46 @@ function renderSettings(g) {
   if (!canEnd && !canForfeit) menu.open = false;
 }
 
+function actingPlayer(g) {
+  if (!g?.players?.length) return null;
+  if (g.phase === "steal_window") {
+    const cur = g.players.findIndex((p) => p.id === g.current_player_id);
+    const start = cur >= 0 ? cur : 0;
+    for (let step = 1; step <= g.players.length; step++) {
+      const p = g.players[(start + step) % g.players.length];
+      if (p && !p.forfeited) return p;
+    }
+  }
+  if (g.phase === "playing") {
+    return g.players.find((p) => p.id === g.current_player_id && !p.forfeited) || null;
+  }
+  return null;
+}
+
+function possessive(name) {
+  const n = String(name || "Player");
+  return n.endsWith("s") || n.endsWith("S") ? `${n}'` : `${n}'s`;
+}
+
+function renderTurnBanner(g) {
+  const el = $("turn-banner");
+  if (!el) return;
+  const actor = actingPlayer(g);
+  if (!actor || (g.phase !== "playing" && g.phase !== "steal_window")) {
+    el.classList.add("hidden");
+    return;
+  }
+  const yours = actor.id === g.you_are;
+  el.classList.remove("hidden");
+  el.classList.toggle("yours", yours);
+  el.classList.toggle("theirs", !yours);
+  if (g.phase === "steal_window") {
+    el.textContent = yours ? "Your steal" : `${actor.name} may steal`;
+  } else {
+    el.textContent = yours ? "Your turn" : `${possessive(actor.name)} turn`;
+  }
+}
+
 function renderTimer() {
   const el = $("turn-timer");
   if (!el) return;
@@ -479,9 +526,17 @@ function renderTimer() {
   const secs = Math.max(0, Math.ceil((g.action_deadline_ms - Date.now()) / 1000));
   const m = Math.floor(secs / 60);
   const s = String(secs % 60).padStart(2, "0");
+  const actor = actingPlayer(g);
+  const yours = actor && actor.id === g.you_are;
   el.classList.remove("hidden");
   el.classList.toggle("urgent", secs <= 15);
-  el.textContent = g.you_can_act ? `Play within ${m}:${s}` : `Turn timer ${m}:${s}`;
+  if (yours) {
+    el.textContent = `You have ${m}:${s}`;
+  } else if (actor) {
+    el.textContent = `${actor.name} has ${m}:${s}`;
+  } else {
+    el.textContent = `${m}:${s}`;
+  }
 }
 
 function escapeHtml(s) {
