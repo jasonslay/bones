@@ -198,16 +198,16 @@ function onServer(msg) {
       localStorage.setItem("bones-room", msg.code);
       break;
     case "state":
+      {
+        const facesKey = (msg.dice || []).join(",");
+        if (state._facesKey !== facesKey) {
+          state.selected = new Set(msg.selected || []);
+          state._facesKey = facesKey;
+        }
+      }
       state.game = msg;
       applyInvite(msg.code, msg.invite_path);
       localStorage.setItem("bones-room", msg.code);
-      {
-        const key = `${(msg.dice || []).join(",")}|${(msg.selected || []).join(",")}|${msg.turn_points}|${msg.phase}`;
-        if (state._diceKey !== key) {
-          state.selected = new Set(msg.selected || []);
-          state._diceKey = key;
-        }
-      }
       renderGame();
       break;
     default:
@@ -307,36 +307,59 @@ function updateTurnScore(g) {
   }
 }
 
+function diceSelectable(g) {
+  return (
+    g.you_can_act &&
+    g.phase === "playing" &&
+    g.awaiting_keep &&
+    !g.bust &&
+    g.dice.length > 0
+  );
+}
+
+function syncDieAppearance(g) {
+  const selectable = diceSelectable(g);
+  const root = $("dice");
+  [...root.children].forEach((btn, i) => {
+    btn.classList.toggle("selected", state.selected.has(i));
+    btn.classList.toggle("bust", !!g.bust);
+    btn.disabled = !selectable;
+  });
+}
+
 function renderDice(g) {
   const root = $("dice");
-  root.innerHTML = "";
-  const selectable =
-    g.you_can_act && g.phase === "playing" && g.awaiting_keep && g.dice.length > 0;
+  const facesKey = (g.dice || []).join(",");
+  const facesChanged = state._renderedFaces !== facesKey;
 
-  g.dice.forEach((face, i) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className =
-      "die" +
-      (state.selected.has(i) ? " selected" : "") +
-      (g.bust ? " bust" : "");
-    btn.dataset.face = String(face);
-    btn.setAttribute("aria-label", `Die showing ${face}`);
-    btn.disabled = !selectable;
-    const faceEl = document.createElement("span");
-    faceEl.className = "die-face";
-    faceEl.appendChild(dieFaceSvg(face));
-    btn.appendChild(faceEl);
-    btn.addEventListener("click", () => {
-      if (!selectable) return;
-      if (state.selected.has(i)) state.selected.delete(i);
-      else state.selected.add(i);
-      renderDice(g);
-      renderActions(g);
-      updateTurnScore(g);
+  if (facesChanged) {
+    const hadDice = state._renderedFaces != null && state._renderedFaces !== "";
+    const land = hadDice || (state._renderedFaces != null && facesKey !== "");
+    root.replaceChildren();
+    g.dice.forEach((face, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "die" + (land && facesKey ? " land" : "");
+      btn.dataset.face = String(face);
+      btn.setAttribute("aria-label", `Die showing ${face}`);
+      const faceEl = document.createElement("span");
+      faceEl.className = "die-face";
+      faceEl.appendChild(dieFaceSvg(face));
+      btn.appendChild(faceEl);
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        if (state.selected.has(i)) state.selected.delete(i);
+        else state.selected.add(i);
+        syncDieAppearance(state.game);
+        renderActions(state.game);
+        updateTurnScore(state.game);
+      });
+      root.appendChild(btn);
     });
-    root.appendChild(btn);
-  });
+    state._renderedFaces = facesKey;
+  }
+
+  syncDieAppearance(g);
 }
 
 function renderActions(g) {
