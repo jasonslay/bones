@@ -1,0 +1,26 @@
+[package]
+name = "bones"
+version = "0.1.0"
+edition = "2024"
+description = "Bones — a high-risk multiplayer dice game"
+license = "MIT"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+bevy = { version = "0.19", default-features = false }
+futures-util = "0.3"
+rand = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tokio-tungstenite = "0.26"
+
+[[bin]]
+name = "bones"
+path = "src/main.rs"
