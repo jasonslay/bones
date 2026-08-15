@@ -266,6 +266,25 @@ input:focus {
   color: var(--gold);
 }
 
+.invite-url {
+  flex: 1 1 12rem;
+  min-width: 0;
+  max-width: 22rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--ivory);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(243, 234, 215, 0.25);
+  border-bottom-color: var(--gold);
+  padding: 0.4rem 0.55rem;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.invite-url:focus {
+  box-shadow: 0 0 0 2px rgba(212, 168, 75, 0.35);
+}
+
 .status {
   margin: 0 0 1.25rem;
   padding: 0.75rem 0;

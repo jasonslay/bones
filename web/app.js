@@ -19,6 +19,35 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.add("hidden"), 2800);
 }
 
+/** Works on plain HTTP (clipboard API needs a secure context). */
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fall through — common on http://LAN IPs
+    }
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;left:-9999px;top:0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
+}
+
+
 function wsUrl() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${location.host}/ws`;
@@ -93,6 +122,11 @@ function renderGame() {
   if (!g) return;
   showScreen("game");
   $("room-code").textContent = g.code;
+  const invite = `${location.origin}/g/${g.code}`;
+  const inviteInput = $("invite-url");
+  if (inviteInput && inviteInput.value !== invite) {
+    inviteInput.value = invite;
+  }
   $("status").textContent = g.message || "";
 
   const board = $("scoreboard");
@@ -282,12 +316,17 @@ async function boot() {
     const g = state.game;
     if (!g) return;
     const url = `${location.origin}/g/${g.code}`;
-    try {
-      await navigator.clipboard.writeText(url);
+    const ok = await copyText(url);
+    if (ok) {
       toast("Invite link copied");
-    } catch {
-      toast(url);
+      return;
     }
+    const input = $("invite-url");
+    if (input) {
+      input.focus();
+      input.select();
+    }
+    toast("Select and copy the invite link");
   });
 }
 
