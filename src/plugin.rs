@@ -56,11 +56,17 @@ fn process_net_commands(world: &mut World) {
 
 fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, msg: ClientMessage) {
     match msg {
-        ClientMessage::CreateGame { name } => {
+        ClientMessage::CreateGame { name, seat_key } => {
             let name = sanitize_name(&name);
+            // If this seat already owns a room, reclaim instead of creating a duplicate.
+            if let Some(code) = find_room_for_seat(world, seat_key) {
+                join_or_reclaim(world, channels, player_id, &code, name, seat_key);
+                return;
+            }
             let code = unique_code(world);
             let player = Player {
                 id: player_id,
+                seat_key,
                 name,
                 score: 0,
                 on_board: false,
@@ -68,12 +74,12 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
             };
             let room = Room::new(code.clone(), player);
             let entity = world.spawn(room).id();
-            world.resource_mut::<GameRooms>().by_code.insert(code.clone(), entity);
+            world
+                .resource_mut::<GameRooms>()
+                .by_code
+                .insert(code.clone(), entity);
 
-            // Track membership synchronously via try_write
-            if let Ok(mut map) = channels.player_rooms.try_write() {
-                map.insert(player_id, code.clone());
-            }
+            track_membership(channels, player_id, &code);
 
             send(
                 channels,
@@ -85,89 +91,14 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
             );
             broadcast_room(world, channels, &code);
         }
-        ClientMessage::JoinGame { code, name } => {
+        ClientMessage::JoinGame {
+            code,
+            name,
+            seat_key,
+        } => {
             let code = code.trim().to_uppercase();
             let name = sanitize_name(&name);
-            let entity = {
-                let rooms = world.resource::<GameRooms>();
-                rooms.by_code.get(&code).copied()
-            };
-            let Some(entity) = entity else {
-                send(
-                    channels,
-                    player_id,
-                    ServerMessage::Error {
-                        message: "Game not found".into(),
-                    },
-                );
-                return;
-            };
-
-            {
-                let mut room = world.get_mut::<Room>(entity).unwrap();
-                if room.phase != GamePhase::Lobby && room.phase != GamePhase::Finished {
-                    // Allow join only in lobby (reconnect handled separately)
-                    if room.player_index(player_id).is_none() {
-                        send(
-                            channels,
-                            player_id,
-                            ServerMessage::Error {
-                                message: "Game already in progress".into(),
-                            },
-                        );
-                        return;
-                    }
-                }
-                if room.players.len() >= 8 {
-                    send(
-                        channels,
-                        player_id,
-                        ServerMessage::Error {
-                            message: "Game is full".into(),
-                        },
-                    );
-                    return;
-                }
-                if let Some(idx) = room.player_index(player_id) {
-                    room.players[idx].connected = true;
-                    room.players[idx].name = name;
-                } else if room.phase == GamePhase::Lobby {
-                    room.players.push(Player {
-                        id: player_id,
-                        name,
-                        score: 0,
-                        on_board: false,
-                        connected: true,
-                    });
-                    room.status_message = format!(
-                        "{} joined — {} player(s) waiting",
-                        room.players.last().unwrap().name,
-                        room.players.len()
-                    );
-                } else {
-                    send(
-                        channels,
-                        player_id,
-                        ServerMessage::Error {
-                            message: "Game already in progress".into(),
-                        },
-                    );
-                    return;
-                }
-            }
-
-            if let Ok(mut map) = channels.player_rooms.try_write() {
-                map.insert(player_id, code.clone());
-            }
-            send(
-                channels,
-                player_id,
-                ServerMessage::Joined {
-                    code: code.clone(),
-                    player_id,
-                },
-            );
-            broadcast_room(world, channels, &code);
+            join_or_reclaim(world, channels, player_id, &code, name, seat_key);
         }
         ClientMessage::StartGame => {
             with_room_mut(world, channels, player_id, |room| {
@@ -201,6 +132,104 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
             with_room_mut(world, channels, player_id, |room| room.rematch(player_id));
         }
     }
+}
+
+fn find_room_for_seat(world: &World, seat_key: Uuid) -> Option<String> {
+    let rooms = world.resource::<GameRooms>();
+    for (code, entity) in &rooms.by_code {
+        if let Some(room) = world.get::<Room>(*entity) {
+            if room.seat_index(seat_key).is_some() {
+                return Some(code.clone());
+            }
+        }
+    }
+    None
+}
+
+fn track_membership(channels: &NetChannels, player_id: Uuid, code: &str) {
+    if let Ok(mut map) = channels.player_rooms.try_write() {
+        map.insert(player_id, code.to_string());
+    }
+}
+
+fn join_or_reclaim(
+    world: &mut World,
+    channels: &NetChannels,
+    player_id: Uuid,
+    code: &str,
+    name: String,
+    seat_key: Uuid,
+) {
+    let entity = {
+        let rooms = world.resource::<GameRooms>();
+        rooms.by_code.get(code).copied()
+    };
+    let Some(entity) = entity else {
+        send(
+            channels,
+            player_id,
+            ServerMessage::Error {
+                message: "Game not found".into(),
+            },
+        );
+        return;
+    };
+
+    let result = {
+        let mut room = world.get_mut::<Room>(entity).unwrap();
+        if room.seat_index(seat_key).is_some() {
+            let old_id = room.players[room.seat_index(seat_key).unwrap()].id;
+            match room.reclaim_seat(seat_key, player_id, name) {
+                Ok(()) => {
+                    // Remove stale membership for the previous connection id
+                    if let Ok(mut map) = channels.player_rooms.try_write() {
+                        map.remove(&old_id);
+                    }
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        } else if room.phase == GamePhase::Lobby {
+            if room.players.len() >= 8 {
+                Err("Game is full".into())
+            } else {
+                room.players.push(Player {
+                    id: player_id,
+                    seat_key,
+                    name,
+                    score: 0,
+                    on_board: false,
+                    connected: true,
+                });
+                room.status_message = format!(
+                    "{} joined — {} player(s) waiting",
+                    room.players.last().unwrap().name,
+                    room.players.len()
+                );
+                Ok(())
+            }
+        } else if room.phase == GamePhase::Finished {
+            Err("Game already finished — ask the host for a rematch".into())
+        } else {
+            Err("Game already in progress".into())
+        }
+    };
+
+    if let Err(message) = result {
+        send(channels, player_id, ServerMessage::Error { message });
+        return;
+    }
+
+    track_membership(channels, player_id, code);
+    send(
+        channels,
+        player_id,
+        ServerMessage::Joined {
+            code: code.to_string(),
+            player_id,
+        },
+    );
+    broadcast_room(world, channels, code);
 }
 
 fn with_room_mut(

@@ -34,6 +34,8 @@ pub struct Room {
 #[derive(Clone, Debug)]
 pub struct Player {
     pub id: Uuid,
+    /// Stable browser identity used to reclaim a seat after disconnect.
+    pub seat_key: Uuid,
     pub name: String,
     pub score: u32,
     pub on_board: bool,
@@ -81,6 +83,39 @@ impl Room {
 
     pub fn player_index(&self, id: Uuid) -> Option<usize> {
         self.players.iter().position(|p| p.id == id)
+    }
+
+    pub fn seat_index(&self, seat_key: Uuid) -> Option<usize> {
+        self.players.iter().position(|p| p.seat_key == seat_key)
+    }
+
+    /// Take over an existing seat after a reconnect (new WebSocket id).
+    pub fn reclaim_seat(
+        &mut self,
+        seat_key: Uuid,
+        new_id: Uuid,
+        name: String,
+    ) -> Result<(), String> {
+        let idx = self
+            .seat_index(seat_key)
+            .ok_or_else(|| "No seat to reclaim".to_string())?;
+        let old_id = self.players[idx].id;
+        self.players[idx].id = new_id;
+        self.players[idx].connected = true;
+        self.players[idx].name = name;
+        if self.host_id == old_id {
+            self.host_id = new_id;
+        }
+        if self.winner_id == Some(old_id) {
+            self.winner_id = Some(new_id);
+        }
+        if let Some(pending) = &mut self.pending_bank {
+            if pending.player_id == old_id {
+                pending.player_id = new_id;
+            }
+        }
+        self.status_message = format!("{} reconnected", self.players[idx].name);
+        Ok(())
     }
 
     pub fn current_player(&self) -> Option<&Player> {
@@ -495,6 +530,7 @@ mod tests {
             "TEST1".into(),
             Player {
                 id: Uuid::new_v4(),
+                seat_key: Uuid::new_v4(),
                 name: "A".into(),
                 score: 0,
                 on_board: false,
@@ -503,6 +539,7 @@ mod tests {
         );
         room.players.push(Player {
             id: Uuid::new_v4(),
+            seat_key: Uuid::new_v4(),
             name: "B".into(),
             score: 0,
             on_board: false,
@@ -518,6 +555,7 @@ mod tests {
             "X".into(),
             Player {
                 id: Uuid::new_v4(),
+                seat_key: Uuid::new_v4(),
                 name: "Solo".into(),
                 score: 0,
                 on_board: false,
@@ -537,5 +575,36 @@ mod tests {
         assert_eq!(room.turn_points, 50);
         let err = room.bank(id).unwrap_err();
         assert!(err.contains("1,000") || err.contains("1000"));
+    }
+
+    #[test]
+    fn reclaim_keeps_host() {
+        let seat = Uuid::new_v4();
+        let old_id = Uuid::new_v4();
+        let mut room = Room::new(
+            "R".into(),
+            Player {
+                id: old_id,
+                seat_key: seat,
+                name: "Host".into(),
+                score: 500,
+                on_board: true,
+                connected: false,
+            },
+        );
+        room.players.push(Player {
+            id: Uuid::new_v4(),
+            seat_key: Uuid::new_v4(),
+            name: "Guest".into(),
+            score: 0,
+            on_board: false,
+            connected: true,
+        });
+        let new_id = Uuid::new_v4();
+        room.reclaim_seat(seat, new_id, "Host".into()).unwrap();
+        assert_eq!(room.host_id, new_id);
+        assert_eq!(room.players[0].id, new_id);
+        assert!(room.players[0].connected);
+        assert_eq!(room.players[0].score, 500);
     }
 }

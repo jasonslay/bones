@@ -4,12 +4,25 @@ const state = {
   ws: null,
   playerId: null,
   playerName: localStorage.getItem("bones-name") || "",
+  seatKey: null,
   game: null,
   selected: new Set(),
   joinMode: false,
+  reconnecting: false,
 };
 
 const $ = (id) => document.getElementById(id);
+
+function seatKey() {
+  if (state.seatKey) return state.seatKey;
+  let key = localStorage.getItem("bones-seat");
+  if (!key) {
+    key = crypto.randomUUID();
+    localStorage.setItem("bones-seat", key);
+  }
+  state.seatKey = key;
+  return key;
+}
 
 function toast(msg) {
   const el = $("toast");
@@ -47,7 +60,6 @@ async function copyText(text) {
   return ok;
 }
 
-
 function wsUrl() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${location.host}/ws`;
@@ -55,6 +67,10 @@ function wsUrl() {
 
 function connect() {
   return new Promise((resolve, reject) => {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      resolve(state.ws);
+      return;
+    }
     const ws = new WebSocket(wsUrl());
     state.ws = ws;
     ws.addEventListener("open", () => resolve(ws));
@@ -67,9 +83,41 @@ function connect() {
       }
     });
     ws.addEventListener("close", () => {
-      toast("Disconnected — refresh to rejoin");
+      if (state.ws !== ws) return;
+      if (state.game?.code) {
+        scheduleReconnect();
+      } else {
+        toast("Disconnected — refresh to rejoin");
+      }
     });
   });
+}
+
+function scheduleReconnect() {
+  if (state.reconnecting) return;
+  state.reconnecting = true;
+  toast("Connection lost — reclaiming your seat…");
+  const attempt = async (n) => {
+    try {
+      await connect();
+      await new Promise((r) => setTimeout(r, 100));
+      const code = state.game?.code || pathCode();
+      const name = state.playerName || "Player";
+      if (code) {
+        send({
+          type: "join_game",
+          code,
+          name,
+          seat_key: seatKey(),
+        });
+      }
+      state.reconnecting = false;
+    } catch {
+      const delay = Math.min(1000 * 2 ** n, 15000);
+      setTimeout(() => attempt(n + 1), delay);
+    }
+  };
+  setTimeout(() => attempt(0), 500);
 }
 
 function send(msg) {
@@ -90,11 +138,12 @@ function onServer(msg) {
     case "game_created":
     case "joined":
       history.replaceState(null, "", `/g/${msg.code}`);
+      localStorage.setItem("bones-room", msg.code);
       break;
     case "state":
       state.game = msg;
+      localStorage.setItem("bones-room", msg.code);
       if (msg.phase !== undefined) {
-        // clear local selection when dice change
         const key = `${msg.dice.join(",")}|${msg.selected.join(",")}|${msg.turn_points}|${msg.phase}`;
         if (state._diceKey !== key) {
           state.selected = new Set(msg.selected || []);
@@ -107,6 +156,7 @@ function onServer(msg) {
       break;
   }
 }
+
 
 function showHomeError(text) {
   $("home-error").textContent = text || "";
@@ -267,6 +317,7 @@ function pathCode() {
 }
 
 async function boot() {
+  seatKey();
   $("player-name").value = state.playerName;
 
   const code = pathCode();
@@ -288,16 +339,14 @@ async function boot() {
     try {
       if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
         await connect();
-        // wait briefly for welcome
         await new Promise((r) => setTimeout(r, 80));
       }
       if (intent === "create") {
         state.joinMode = false;
-        send({ type: "create_game", name });
+        send({ type: "create_game", name, seat_key: seatKey() });
         return;
       }
 
-      // Join — use form code, or code from /g/URL when opened via invite
       let joinCode = ($("join-code").value || pathCode()).trim().toUpperCase();
       if (!joinCode) {
         state.joinMode = true;
@@ -306,7 +355,12 @@ async function boot() {
         showHomeError("Enter a game code");
         return;
       }
-      send({ type: "join_game", code: joinCode, name });
+      send({
+        type: "join_game",
+        code: joinCode,
+        name,
+        seat_key: seatKey(),
+      });
     } catch (err) {
       showHomeError(err.message || "Connection failed");
     }
@@ -328,6 +382,22 @@ async function boot() {
     }
     toast("Select and copy the invite link");
   });
+
+  // Returning to an invite URL (or after sleep/refresh): reclaim seat automatically
+  if (code && state.playerName) {
+    try {
+      await connect();
+      await new Promise((r) => setTimeout(r, 80));
+      send({
+        type: "join_game",
+        code,
+        name: state.playerName,
+        seat_key: seatKey(),
+      });
+    } catch (err) {
+      showHomeError(err.message || "Connection failed");
+    }
+  }
 }
 
 boot();

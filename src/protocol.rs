@@ -8,8 +8,12 @@ pub const DICE_COUNT: usize = 5;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
-    CreateGame { name: String },
-    JoinGame { code: String, name: String },
+    CreateGame { name: String, seat_key: Uuid },
+    JoinGame {
+        code: String,
+        name: String,
+        seat_key: Uuid,
+    },
     StartGame,
     Roll,
     Keep { indices: Vec<usize> },
