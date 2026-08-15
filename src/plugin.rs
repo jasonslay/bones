@@ -196,10 +196,9 @@ fn join_or_reclaim(
                     connected: true,
                 });
                 room.status_message = format!(
-                    "{} joined — {} player(s). Share /g/{}",
+                    "{} joined — {} player(s).",
                     room.players.last().unwrap().name,
-                    room.players.len(),
-                    room.code
+                    room.players.len()
                 );
                 Ok(())
             }
