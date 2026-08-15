@@ -25,6 +25,9 @@ pub enum ClientMessage {
         #[serde(default)]
         indices: Vec<usize>,
     },
+    Select {
+        indices: Vec<usize>,
+    },
     Keep {
         indices: Vec<usize>,
     },

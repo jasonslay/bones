@@ -203,6 +203,8 @@ function onServer(msg) {
         if (state._facesKey !== facesKey) {
           state.selected = new Set(msg.selected || []);
           state._facesKey = facesKey;
+        } else if (!msg.you_can_act) {
+          state.selected = new Set(msg.selected || []);
         }
       }
       state.game = msg;
@@ -356,6 +358,10 @@ function renderDice(g) {
         syncDieAppearance(state.game);
         renderActions(state.game);
         updateTurnScore(state.game);
+        send({
+          type: "select",
+          indices: [...state.selected].sort((a, b) => a - b),
+        });
       });
       root.appendChild(btn);
     });

@@ -113,6 +113,11 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
                 room.roll(player_id, indices)
             });
         }
+        ClientMessage::Select { indices } => {
+            with_room_mut(world, channels, player_id, |room| {
+                room.select(player_id, indices)
+            });
+        }
         ClientMessage::Keep { indices } => {
             with_room_mut(world, channels, player_id, |room| {
                 room.keep(player_id, indices)

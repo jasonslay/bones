@@ -307,6 +307,26 @@ impl Room {
         }
     }
 
+    pub fn select(&mut self, player_id: Uuid, indices: Vec<usize>) -> Result<(), String> {
+        if self.phase != GamePhase::Playing {
+            return Err("Cannot select dice now".into());
+        }
+        if self.current_player().ok_or("No current player")?.id != player_id {
+            return Err("Not your turn".into());
+        }
+        if !self.awaiting_keep || self.dice.is_empty() || self.bust_showing {
+            return Err("Nothing to select".into());
+        }
+        let mut unique = indices;
+        unique.sort_unstable();
+        unique.dedup();
+        if unique.iter().any(|&i| i >= self.dice.len()) {
+            return Err("Invalid die".into());
+        }
+        self.selected = unique;
+        Ok(())
+    }
+
     pub fn roll(&mut self, player_id: Uuid, indices: Vec<usize>) -> Result<(), String> {
         if self.phase != GamePhase::Playing {
             return Err("Not your moment to roll".into());
@@ -987,6 +1007,21 @@ mod tests {
         assert_eq!(room.players[0].score, 1350);
         assert_eq!(room.phase, GamePhase::Playing);
         assert_eq!(room.current_player().unwrap().id, room.players[2].id);
+    }
+
+    #[test]
+    fn select_is_visible_to_other_players() {
+        let mut room = room_with_two();
+        let a = room.players[0].id;
+        let b = room.players[1].id;
+        room.dice = vec![1, 5, 2, 3, 4];
+        room.awaiting_keep = true;
+        room.select(a, vec![0, 1]).unwrap();
+        assert_eq!(room.selected, vec![0, 1]);
+        assert_eq!(room.view_for(b).selected, vec![0, 1]);
+        assert!(room.select(b, vec![2]).is_err());
+        room.select(a, vec![]).unwrap();
+        assert!(room.view_for(b).selected.is_empty());
     }
 
     #[test]
