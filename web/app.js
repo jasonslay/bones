@@ -257,7 +257,7 @@ function renderGame() {
       ${p.forfeited ? '<span class="badge forfeit">forfeited</span>' : ""}
       ${p.on_board || p.forfeited ? "" : '<span class="badge">off board</span>'}
       ${!p.connected ? '<span class="badge">away</span>' : ""}
-      ${g.winner_id === p.id ? '<span class="badge">winner</span>' : ""}
+      ${g.winner_id === p.id ? '<span class="badge winner">winner</span>' : ""}
     `;
     board.appendChild(chip);
   }

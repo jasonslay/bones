@@ -335,9 +335,31 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   box-shadow: 0 0 0 1px rgba(212, 168, 75, 0.25);
 }
 .player-chip.active .pname, .player-chip.active .pscore { color: var(--gold); }
-.player-chip .badge { font-size: 0.7rem; color: var(--ember); }
-.player-chip .badge.turn { color: var(--gold); letter-spacing: 0.08em; text-transform: uppercase; }
-.player-chip .badge.forfeit { color: var(--danger); }
+.player-chip .badge {
+  display: inline-block;
+  width: fit-content;
+  margin-top: 0.15rem;
+  padding: 0.12rem 0.4rem;
+  border-radius: 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ivory);
+  background: rgba(0, 0, 0, 0.35);
+}
+.player-chip .badge.turn {
+  color: var(--ink);
+  background: var(--gold);
+}
+.player-chip .badge.winner {
+  color: var(--ink);
+  background: var(--gold);
+}
+.player-chip .badge.forfeit {
+  color: #fff4f1;
+  background: var(--danger);
+}
 
 .table { text-align: center; padding: 1rem 0 2rem; }
 
