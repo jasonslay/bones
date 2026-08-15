@@ -63,6 +63,7 @@ pub struct GameView {
     pub selected: Vec<usize>,
     pub turn_points: u32,
     pub awaiting_keep: bool,
+    pub bust: bool,
     pub pending_bank: Option<PendingBankView>,
     pub steal_available: bool,
     pub you_can_act: bool,

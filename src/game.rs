@@ -25,6 +25,8 @@ pub struct Room {
     pub turn_points: u32,
     pub awaiting_keep: bool,
     pub steal_leftover: usize,
+    /// Last roll scored nothing; keep those dice on the table until the next roll.
+    pub bust_showing: bool,
     pub pending_bank: Option<PendingBank>,
     pub winner_id: Option<Uuid>,
     pub status_message: String,
@@ -73,6 +75,7 @@ impl Room {
             turn_points: 0,
             awaiting_keep: false,
             steal_leftover: 0,
+            bust_showing: false,
             pending_bank: None,
             winner_id: None,
             status_message: "Waiting for players… share the invite link.".into(),
@@ -178,6 +181,7 @@ impl Room {
             selected: self.selected.clone(),
             turn_points: self.turn_points,
             awaiting_keep: self.awaiting_keep,
+            bust: self.bust_showing,
             pending_bank: self.pending_bank.as_ref().map(|p| PendingBankView {
                 player_id: p.player_id,
                 points: p.points,
@@ -214,20 +218,34 @@ impl Room {
         self.turn_points = 0;
         self.awaiting_keep = false;
         self.steal_leftover = 0;
+        self.bust_showing = false;
     }
 
-    fn begin_next_turn(&mut self) {
+    fn begin_next_turn(&mut self, keep_dice: bool) {
         self.pending_bank = None;
         self.phase = GamePhase::Playing;
         self.turn_index = self.next_player_index();
-        self.reset_turn_state();
+        if keep_dice {
+            self.selected.clear();
+            self.turn_points = 0;
+            self.awaiting_keep = false;
+            self.steal_leftover = 0;
+            self.bust_showing = true;
+        } else {
+            self.reset_turn_state();
+        }
         if let Some(p) = self.current_player() {
-            self.status_message = format!("{}'s turn — {}", p.name, Self::turn_hint(p.on_board));
+            let next = format!("{}'s turn — {}", p.name, Self::turn_hint(p.on_board));
+            if keep_dice {
+                self.status_message = format!("{} {next}", self.status_message);
+            } else {
+                self.status_message = next;
+            }
         }
     }
 
     fn dice_to_roll(&self) -> usize {
-        if self.dice.is_empty() {
+        if self.bust_showing || self.dice.is_empty() {
             DICE_COUNT
         } else {
             self.dice.len().saturating_sub(self.selected.len())
@@ -255,6 +273,7 @@ impl Room {
         self.selected.clear();
         self.awaiting_keep = true;
         self.steal_leftover = 0;
+        self.bust_showing = false;
 
         if !has_any_score(&self.dice) {
             let name = self
@@ -263,7 +282,7 @@ impl Room {
                 .unwrap_or_default();
             self.status_message = format!("{name} busted! No scoring dice.");
             self.turn_points = 0;
-            self.begin_next_turn();
+            self.begin_next_turn(true);
             return Ok(());
         }
 
@@ -364,7 +383,7 @@ impl Room {
             player.score = points;
             player.on_board = true;
             self.status_message = format!("{name} is on the board with {points}!");
-            self.begin_next_turn();
+            self.begin_next_turn(false);
             return Ok(());
         }
 
@@ -402,7 +421,7 @@ impl Room {
             let player = self.current_player_mut().unwrap();
             player.score += points;
             self.status_message = format!("{name} banks {points}. Score: {}", player.score);
-            self.begin_next_turn();
+            self.begin_next_turn(false);
             Ok(())
         }
     }
@@ -422,7 +441,7 @@ impl Room {
                 self.players[idx].score += pending.points;
             }
         }
-        self.begin_next_turn();
+        self.begin_next_turn(false);
         Ok(())
     }
 
@@ -463,7 +482,7 @@ impl Room {
             }
             self.status_message = format!("{name} failed the steal — bust!");
             self.turn_points = 0;
-            self.begin_next_turn();
+            self.begin_next_turn(true);
             return Ok(());
         }
 
@@ -565,6 +584,25 @@ mod tests {
         assert!(room.players[0].connected);
         assert_eq!(room.players[0].score, 500);
         assert_eq!(room.view_for(new_id).invite_path, "/g/R");
+    }
+
+    #[test]
+    fn bust_keeps_dice_on_the_table() {
+        let mut room = room_with_two();
+        let b = room.players[1].id;
+        room.dice = vec![2, 3, 4, 6, 6];
+        room.awaiting_keep = true;
+        room.status_message = format!("{} busted! No scoring dice.", room.players[0].name);
+        room.turn_points = 0;
+        room.begin_next_turn(true);
+        assert_eq!(room.dice, vec![2, 3, 4, 6, 6]);
+        assert!(room.bust_showing);
+        assert_eq!(room.current_player().unwrap().id, b);
+        assert!(!room.awaiting_keep);
+        assert_eq!(room.dice_to_roll(), 5);
+        let view = room.view_for(b);
+        assert!(view.bust);
+        assert_eq!(view.dice, vec![2, 3, 4, 6, 6]);
     }
 
     #[test]

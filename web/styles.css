@@ -312,7 +312,16 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.45), 0 8px 18px var(--shadow);
 }
 
-.die:disabled { cursor: default; opacity: 0.85; }
+.die:disabled { cursor: default; }
+
+.die.bust .die-face {
+  opacity: 0.85;
+  filter: saturate(0.7);
+}
+
+.die.bust .die-face svg {
+  fill: #6b2a22;
+}
 
 .actions {
   display: flex;

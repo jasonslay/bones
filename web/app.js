@@ -273,7 +273,10 @@ function renderDice(g) {
   g.dice.forEach((face, i) => {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "die" + (state.selected.has(i) ? " selected" : "");
+    btn.className =
+      "die" +
+      (state.selected.has(i) ? " selected" : "") +
+      (g.bust ? " bust" : "");
     btn.dataset.face = String(face);
     btn.setAttribute("aria-label", `Die showing ${face}`);
     btn.disabled = !selectable;
