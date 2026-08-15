@@ -258,6 +258,7 @@ function renderGame() {
   updateTurnScore(g);
   renderDice(g);
   renderActions(g);
+  renderSettings(g);
 }
 
 function scoreHeld(faces) {
@@ -393,20 +394,6 @@ function renderActions(g) {
     b.textContent = label;
     b.disabled = !!opts.disabled;
     b.addEventListener("click", () => {
-      if (type === "end_game") {
-        if (!window.confirm("End the game now? Highest score on the board wins.")) {
-          return;
-        }
-        send({ type: "end_game" });
-        return;
-      }
-      if (type === "forfeit") {
-        if (!window.confirm("Forfeit this game? You will be out for the rest of the match.")) {
-          return;
-        }
-        send({ type: "forfeit" });
-        return;
-      }
       const indices = [...state.selected].sort((a, b) => a - b);
       if (type === "roll" || type === "bank") {
         send({ type, indices });
@@ -464,11 +451,21 @@ function renderActions(g) {
   } else {
     add("Roll", "roll");
   }
+}
 
-  if (g.you_are === g.host_id) {
-    add("End game", "end_game", { className: "danger" });
-  }
-  add("Forfeit", "forfeit", { className: "ghost" });
+function renderSettings(g) {
+  const menu = $("game-settings");
+  const endBtn = $("settings-end-game");
+  const forfeitBtn = $("settings-forfeit");
+  if (!menu || !endBtn || !forfeitBtn) return;
+  const me = g.players.find((p) => p.id === g.you_are);
+  const inPlay = g.phase === "playing" || g.phase === "steal_window";
+  const canEnd = inPlay && g.you_are === g.host_id;
+  const canForfeit = inPlay && !me?.forfeited;
+  endBtn.classList.toggle("hidden", !canEnd);
+  forfeitBtn.classList.toggle("hidden", !canForfeit);
+  menu.classList.toggle("hidden", !canEnd && !canForfeit);
+  if (!canEnd && !canForfeit) menu.open = false;
 }
 
 function renderTimer() {
@@ -534,6 +531,17 @@ async function boot() {
     } catch (err) {
       showHomeError(err.message || "Connection failed");
     }
+  });
+
+  $("settings-end-game").addEventListener("click", () => {
+    if (!window.confirm("End the game now? Highest score on the board wins.")) return;
+    send({ type: "end_game" });
+    $("game-settings").open = false;
+  });
+  $("settings-forfeit").addEventListener("click", () => {
+    if (!window.confirm("Forfeit this game? You will be out for the rest of the match.")) return;
+    send({ type: "forfeit" });
+    $("game-settings").open = false;
   });
 
   $("copy-link").addEventListener("click", async () => {
