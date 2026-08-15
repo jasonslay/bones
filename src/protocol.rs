@@ -20,9 +20,15 @@ pub enum ClientMessage {
         seat_key: Uuid,
     },
     StartGame,
-    Roll,
+    Roll {
+        #[serde(default)]
+        indices: Vec<usize>,
+    },
     Keep { indices: Vec<usize> },
-    Bank,
+    Bank {
+        #[serde(default)]
+        indices: Vec<usize>,
+    },
     Steal,
     DeclineSteal,
     Rematch,

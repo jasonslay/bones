@@ -299,15 +299,18 @@ function renderActions(g) {
   const root = $("actions");
   root.innerHTML = "";
 
-  const add = (label, type, opts = {}) => {
+    const add = (label, type, opts = {}) => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "btn " + (opts.className || "primary");
     b.textContent = label;
     b.disabled = !!opts.disabled;
     b.addEventListener("click", () => {
-      if (type === "keep") {
-        send({ type: "keep", indices: [...state.selected].sort((a, b) => a - b) });
+      const indices = [...state.selected].sort((a, b) => a - b);
+      if (type === "roll" || type === "bank") {
+        send({ type, indices });
+      } else if (type === "keep") {
+        send({ type: "keep", indices });
       } else {
         send({ type });
       }
@@ -351,10 +354,11 @@ function renderActions(g) {
   }
 
   if (g.awaiting_keep) {
-    add("Keep selected", "keep", { disabled: state.selected.size === 0 });
+    const needPick = state.selected.size === 0;
+    add("Roll", "roll", { disabled: needPick });
+    add("Bank", "bank", { className: "ghost", disabled: needPick });
   } else {
     add("Roll", "roll");
-    if (g.turn_points > 0) add("Bank", "bank", { className: "ghost" });
   }
 }
 

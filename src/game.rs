@@ -252,16 +252,18 @@ impl Room {
         }
     }
 
-    pub fn roll(&mut self, player_id: Uuid) -> Result<(), String> {
+    pub fn roll(&mut self, player_id: Uuid, indices: Vec<usize>) -> Result<(), String> {
         if self.phase != GamePhase::Playing {
             return Err("Not your moment to roll".into());
         }
-        let cur = self.current_player().ok_or("No current player")?;
-        if cur.id != player_id {
+        if self.current_player().ok_or("No current player")?.id != player_id {
             return Err("Not your turn".into());
         }
         if self.awaiting_keep {
-            return Err("Select scoring dice before rolling again".into());
+            self.keep(player_id, indices)?;
+            if self.phase != GamePhase::Playing || self.winner_id.is_some() {
+                return Ok(());
+            }
         }
 
         let count = self.dice_to_roll();
@@ -300,7 +302,7 @@ impl Room {
             }
         }
 
-        self.status_message = "Select scoring dice to keep, then roll again or bank".into();
+        self.status_message = "Select scoring dice, then roll again or bank".into();
         Ok(())
     }
 
@@ -352,21 +354,24 @@ impl Room {
         Ok(())
     }
 
-    pub fn bank(&mut self, player_id: Uuid) -> Result<(), String> {
+    pub fn bank(&mut self, player_id: Uuid, indices: Vec<usize>) -> Result<(), String> {
         if self.phase != GamePhase::Playing {
             return Err("Cannot bank now".into());
         }
-        let cur = self.current_player().ok_or("No current player")?;
-        if cur.id != player_id {
+        if self.current_player().ok_or("No current player")?.id != player_id {
             return Err("Not your turn".into());
+        }
+        if self.awaiting_keep {
+            self.keep(player_id, indices)?;
+            if self.phase != GamePhase::Playing || self.winner_id.is_some() {
+                return Ok(());
+            }
         }
         if self.turn_points == 0 {
             return Err("Nothing to bank".into());
         }
-        if self.awaiting_keep {
-            return Err("Select scoring dice before banking".into());
-        }
 
+        let cur = self.current_player().ok_or("No current player")?;
         let on_board = cur.on_board;
         let score = cur.score;
         let name = cur.name.clone();
@@ -557,7 +562,7 @@ mod tests {
         room.awaiting_keep = true;
         room.keep(id, vec![0]).unwrap();
         assert_eq!(room.turn_points, 50);
-        let err = room.bank(id).unwrap_err();
+        let err = room.bank(id, vec![]).unwrap_err();
         assert!(err.contains("1,000") || err.contains("1000"));
     }
 
@@ -584,6 +589,18 @@ mod tests {
         assert!(room.players[0].connected);
         assert_eq!(room.players[0].score, 500);
         assert_eq!(room.view_for(new_id).invite_path, "/g/R");
+    }
+
+    #[test]
+    fn bank_keeps_then_banks() {
+        let mut room = room_with_two();
+        let id = room.players[0].id;
+        room.dice = vec![1, 1, 1, 2, 3];
+        room.awaiting_keep = true;
+        room.bank(id, vec![0, 1, 2]).unwrap();
+        assert_eq!(room.players[0].score, 1000);
+        assert!(room.players[0].on_board);
+        assert_eq!(room.current_player().unwrap().id, room.players[1].id);
     }
 
     #[test]

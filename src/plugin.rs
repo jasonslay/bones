@@ -105,16 +105,20 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
                 }
             });
         }
-        ClientMessage::Roll => {
-            with_room_mut(world, channels, player_id, |room| room.roll(player_id));
+        ClientMessage::Roll { indices } => {
+            with_room_mut(world, channels, player_id, |room| {
+                room.roll(player_id, indices)
+            });
         }
         ClientMessage::Keep { indices } => {
             with_room_mut(world, channels, player_id, |room| {
                 room.keep(player_id, indices)
             });
         }
-        ClientMessage::Bank => {
-            with_room_mut(world, channels, player_id, |room| room.bank(player_id));
+        ClientMessage::Bank { indices } => {
+            with_room_mut(world, channels, player_id, |room| {
+                room.bank(player_id, indices)
+            });
         }
         ClientMessage::Steal => {
             with_room_mut(world, channels, player_id, |room| room.steal(player_id));
