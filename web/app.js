@@ -1,11 +1,26 @@
-const PIP_LAYOUT = {
-  1: [5],
-  2: [1, 9],
-  3: [1, 5, 9],
-  4: [1, 3, 7, 9],
-  5: [1, 3, 5, 7, 9],
-  6: [1, 3, 4, 6, 7, 9],
+const PIP_XY = {
+  1: [[50, 50]],
+  2: [[28, 28], [72, 72]],
+  3: [[28, 28], [50, 50], [72, 72]],
+  4: [[28, 28], [72, 28], [28, 72], [72, 72]],
+  5: [[28, 28], [72, 28], [50, 50], [28, 72], [72, 72]],
+  6: [[28, 28], [72, 28], [28, 50], [72, 50], [28, 72], [72, 72]],
 };
+
+function dieFaceSvg(face) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 100 100");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  for (const [x, y] of PIP_XY[face] || []) {
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.setAttribute("cx", String(x));
+    c.setAttribute("cy", String(y));
+    c.setAttribute("r", "10");
+    svg.appendChild(c);
+  }
+  return svg;
+}
 
 const state = {
   ws: null,
@@ -259,12 +274,7 @@ function renderDice(g) {
     btn.dataset.face = String(face);
     btn.setAttribute("aria-label", `Die showing ${face}`);
     btn.disabled = !selectable;
-    const pips = new Set(PIP_LAYOUT[face] || []);
-    for (let cell = 1; cell <= 9; cell++) {
-      const pip = document.createElement("span");
-      pip.className = "pip" + (pips.has(cell) ? " on" : "");
-      btn.appendChild(pip);
-    }
+    btn.appendChild(dieFaceSvg(face));
     btn.addEventListener("click", () => {
       if (!selectable) return;
       if (state.selected.has(i)) state.selected.delete(i);
