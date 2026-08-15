@@ -3,7 +3,7 @@ use crate::protocol::{ClientMessage, ServerMessage};
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::response::IntoResponse;
+use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -29,12 +29,20 @@ pub fn new_channels() -> NetChannels {
 }
 
 pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
+    let index_html = std::fs::read_to_string(web_dir.join("index.html"))
+        .unwrap_or_else(|_| "<p>Bones UI missing — run from the project root.</p>".into());
     let state = AppState { channels };
-    let index = web_dir.join("index.html");
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        .fallback_service(ServeDir::new(&web_dir).not_found_service(ServeFile::new(index)))
+        .route("/g/{code}", get({
+            let page = index_html.clone();
+            move || {
+                let page = page.clone();
+                async move { Html(page) }
+            }
+        }))
+        .fallback_service(ServeDir::new(&web_dir))
         .with_state(state);
 
     tracing::info!("Bones listening on http://{addr}");
