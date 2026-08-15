@@ -1,6 +1,6 @@
 # Bones
 
-A multiplayer web version of **Bones** — a high-risk dice game. Create a room, share the link, and roll.
+A multiplayer web version of **Bones** — a high-risk dice game (5 dice; not 6-dice Farkle). Create a room, share the link, and roll.
 
 ## Run
 
