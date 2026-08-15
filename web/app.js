@@ -338,7 +338,7 @@ function syncDieAppearance(g) {
     const keepable = canKeepDie(g.dice, i);
     btn.classList.toggle("selected", state.selected.has(i) && keepable);
     btn.classList.toggle("bust", !!g.bust);
-    btn.classList.toggle("dead", !g.bust && !keepable);
+    btn.classList.toggle("dead", !!g.bust || !keepable);
     btn.disabled = !selectable || !keepable;
   });
 }

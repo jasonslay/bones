@@ -390,18 +390,10 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 
 .die:disabled { cursor: default; }
 
-.die.dead .die-face {
+.die.dead .die-face,
+.die.bust .die-face {
   opacity: 0.42;
   filter: saturate(0.35);
-}
-
-.die.bust .die-face {
-  opacity: 0.85;
-  filter: saturate(0.7);
-}
-
-.die.bust .die-face svg {
-  fill: #6b2a22;
 }
 
 .actions {
