@@ -12,6 +12,8 @@ Binds to `0.0.0.0:8080` by default (`BONES_ADDR` to override). Open that host fr
 
 Invite links always include the room code, e.g. `http://10.1.20.28:8080/g/ABC12`.
 
+Production: [https://bones.jtslay.com](https://bones.jtslay.com) (`ghcr.io/jasonslay/bones`).
+
 ## Stack
 
 - Rust 2024, **Bevy 0.19.1** (headless rooms/turns)

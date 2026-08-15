@@ -34,6 +34,7 @@ pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
     let state = AppState { channels };
 
     let app = Router::new()
+        .route("/healthz", get(|| async { "ok" }))
         .route("/ws", get(ws_handler))
         .route("/g/{code}", get({
             let page = index_html.clone();

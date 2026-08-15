@@ -47,6 +47,9 @@ fn main() {
 }
 
 fn web_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("BONES_WEB_DIR") {
+        return PathBuf::from(dir);
+    }
     let candidates = [
         PathBuf::from("web"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web"),
