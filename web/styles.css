@@ -327,16 +327,14 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 }
 
 .player-chip { display: flex; flex-direction: column; gap: 0.15rem; min-width: 5.5rem; padding: 0.4rem 0.55rem 0.45rem; border: 2px solid transparent; border-radius: 0.4rem; }
-.player-chip .pname { font-size: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ivory-dim); }
-.player-chip .pscore { font-family: var(--font-brand); font-size: 1.8rem; line-height: 1; }
+.player-chip .pname { font-size: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ivory); }
+.player-chip .pscore { font-family: var(--font-brand); font-size: 1.8rem; line-height: 1; color: var(--ivory); }
 .player-chip.active {
   border-color: var(--gold);
   background: rgba(212, 168, 75, 0.14);
   box-shadow: 0 0 0 1px rgba(212, 168, 75, 0.25);
 }
 .player-chip.active .pname, .player-chip.active .pscore { color: var(--gold); }
-.player-chip.off-board .pscore { opacity: 0.55; }
-.player-chip.forfeited { opacity: 0.45; }
 .player-chip .badge { font-size: 0.7rem; color: var(--ember); }
 .player-chip .badge.turn { color: var(--gold); letter-spacing: 0.08em; text-transform: uppercase; }
 .player-chip .badge.forfeit { color: var(--danger); }
