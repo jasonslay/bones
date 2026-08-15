@@ -1,4 +1,11 @@
-const DIE_FACES = ["", "1", "2", "3", "4", "5", "6"];
+const PIP_LAYOUT = {
+  1: [5],
+  2: [1, 9],
+  3: [1, 5, 9],
+  4: [1, 3, 7, 9],
+  5: [1, 3, 5, 7, 9],
+  6: [1, 3, 4, 6, 7, 9],
+};
 
 const state = {
   ws: null,
@@ -249,8 +256,15 @@ function renderDice(g) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "die" + (state.selected.has(i) ? " selected" : "");
-    btn.textContent = DIE_FACES[face] || String(face);
+    btn.dataset.face = String(face);
+    btn.setAttribute("aria-label", `Die showing ${face}`);
     btn.disabled = !selectable;
+    const pips = new Set(PIP_LAYOUT[face] || []);
+    for (let cell = 1; cell <= 9; cell++) {
+      const pip = document.createElement("span");
+      pip.className = "pip" + (pips.has(cell) ? " on" : "");
+      btn.appendChild(pip);
+    }
     btn.addEventListener("click", () => {
       if (!selectable) return;
       if (state.selected.has(i)) state.selected.delete(i);
