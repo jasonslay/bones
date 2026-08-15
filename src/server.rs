@@ -17,6 +17,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct AppState {
     pub channels: NetChannels,
+    pub web_dir: PathBuf,
 }
 
 pub fn new_channels() -> NetChannels {
@@ -29,26 +30,28 @@ pub fn new_channels() -> NetChannels {
 }
 
 pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
-    let index_html = std::fs::read_to_string(web_dir.join("index.html"))
-        .unwrap_or_else(|_| "<p>Bones UI missing — run from the project root.</p>".into());
-    let state = AppState { channels };
+    let state = AppState {
+        channels,
+        web_dir: web_dir.clone(),
+    };
 
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/ws", get(ws_handler))
-        .route("/g/{code}", get({
-            let page = index_html.clone();
-            move || {
-                let page = page.clone();
-                async move { Html(page) }
-            }
-        }))
+        .route("/g/{code}", get(index_page))
         .fallback_service(ServeDir::new(&web_dir))
         .with_state(state);
 
     tracing::info!("Bones listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
     axum::serve(listener, app).await.expect("serve");
+}
+
+async fn index_page(State(state): State<AppState>) -> Html<String> {
+    let page = std::fs::read_to_string(state.web_dir.join("index.html")).unwrap_or_else(|_| {
+        "<p>Bones UI missing — run from the project root.</p>".into()
+    });
+    Html(page)
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {

@@ -588,15 +588,17 @@ async function boot() {
     }
   });
 
-  $("settings-end-game").addEventListener("click", () => {
+  $("settings-end-game")?.addEventListener("click", () => {
     if (!window.confirm("End the game now? Highest score on the board wins.")) return;
     send({ type: "end_game" });
-    $("game-settings").open = false;
+    const menu = $("game-settings");
+    if (menu) menu.open = false;
   });
-  $("settings-forfeit").addEventListener("click", () => {
+  $("settings-forfeit")?.addEventListener("click", () => {
     if (!window.confirm("Forfeit this game? You will be out for the rest of the match.")) return;
     send({ type: "forfeit" });
-    $("game-settings").open = false;
+    const menu = $("game-settings");
+    if (menu) menu.open = false;
   });
 
   $("copy-link").addEventListener("click", async () => {

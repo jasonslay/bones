@@ -40,13 +40,6 @@
         <div class="brand-inline">Bones</div>
         <div class="room-meta">
           <span>Room <strong id="room-code"></strong></span>
-          <details id="game-settings" class="game-settings hidden">
-            <summary>Game settings</summary>
-            <div class="game-settings-panel">
-              <button type="button" id="settings-end-game" class="btn danger hidden">End game</button>
-              <button type="button" id="settings-forfeit" class="btn ghost hidden">Forfeit</button>
-            </div>
-          </details>
         </div>
       </header>
       <div class="invite-bar">
@@ -64,6 +57,13 @@
         <div id="turn-points" class="turn-points hidden">Turn: <strong>0</strong></div>
         <div id="dice" class="dice" role="group" aria-label="Dice"></div>
         <div id="actions" class="actions"></div>
+        <details id="game-settings" class="game-settings hidden">
+          <summary>Game settings</summary>
+          <div class="game-settings-panel">
+            <button type="button" id="settings-end-game" class="btn danger hidden">End game</button>
+            <button type="button" id="settings-forfeit" class="btn ghost hidden">Forfeit</button>
+          </div>
+        </details>
       </div>
       <details class="rules">
         <summary>How to play</summary>
