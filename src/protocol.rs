@@ -24,13 +24,16 @@ pub enum ClientMessage {
         #[serde(default)]
         indices: Vec<usize>,
     },
-    Keep { indices: Vec<usize> },
+    Keep {
+        indices: Vec<usize>,
+    },
     Bank {
         #[serde(default)]
         indices: Vec<usize>,
     },
     Steal,
     DeclineSteal,
+    EndGame,
     Rematch,
 }
 

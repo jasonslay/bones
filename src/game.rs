@@ -418,9 +418,8 @@ impl Room {
                 leftover,
             });
             self.phase = GamePhase::StealWindow;
-            self.status_message = format!(
-                "{name} banks {points} with {leftover} dice left. {next_name} may steal!"
-            );
+            self.status_message =
+                format!("{name} banks {points} with {leftover} dice left. {next_name} may steal!");
             Ok(())
         } else {
             let player = self.current_player_mut().unwrap();
@@ -441,11 +440,7 @@ impl Room {
             return Err("Only the next player can decline".into());
         }
 
-        if let Some(pending) = self.pending_bank.take() {
-            if let Some(idx) = self.player_index(pending.player_id) {
-                self.players[idx].score += pending.points;
-            }
-        }
+        self.apply_pending_bank();
         self.begin_next_turn(false);
         Ok(())
     }
@@ -505,6 +500,60 @@ impl Room {
             "{name} steals with {} pending! Select scoring dice.",
             self.turn_points
         );
+        Ok(())
+    }
+
+    fn apply_pending_bank(&mut self) {
+        if let Some(pending) = self.pending_bank.take() {
+            if let Some(idx) = self.player_index(pending.player_id) {
+                self.players[idx].score += pending.points;
+            }
+        }
+    }
+
+    fn leader_id(&self) -> Option<Uuid> {
+        let mut best: Option<u32> = None;
+        let mut leaders = Vec::new();
+        for p in self.players.iter().filter(|p| p.on_board) {
+            match best {
+                None => {
+                    best = Some(p.score);
+                    leaders = vec![p.id];
+                }
+                Some(score) if p.score > score => {
+                    best = Some(p.score);
+                    leaders = vec![p.id];
+                }
+                Some(score) if p.score == score => leaders.push(p.id),
+                _ => {}
+            }
+        }
+        if leaders.len() == 1 {
+            Some(leaders[0])
+        } else {
+            None
+        }
+    }
+
+    pub fn end_game(&mut self, player_id: Uuid) -> Result<(), String> {
+        if player_id != self.host_id {
+            return Err("Only the host can end the game".into());
+        }
+        if !matches!(self.phase, GamePhase::Playing | GamePhase::StealWindow) {
+            return Err("Game is not in progress".into());
+        }
+        self.apply_pending_bank();
+        self.phase = GamePhase::Finished;
+        self.winner_id = self.leader_id();
+        self.status_message = match self.winner_id.and_then(|id| {
+            self.players
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| (p.name.clone(), p.score))
+        }) {
+            Some((name, score)) => format!("Host ended the game. {name} wins with {score}."),
+            None => "Host ended the game. No winner.".into(),
+        };
         Ok(())
     }
 
@@ -627,5 +676,62 @@ mod tests {
         let room = Room::new("ABC12".into(), player("Host"));
         assert_eq!(room.view_for(room.host_id).invite_path, "/g/ABC12");
         assert_eq!(room.view_for(room.host_id).code, "ABC12");
+    }
+
+    #[test]
+    fn host_can_end_game_early() {
+        let mut room = room_with_two();
+        let host = room.host_id;
+        let guest = room.players[1].id;
+        room.players[0].score = 2400;
+        room.players[0].on_board = true;
+        room.players[1].score = 1100;
+        room.players[1].on_board = true;
+
+        assert!(room.end_game(guest).is_err());
+        room.end_game(host).unwrap();
+        assert_eq!(room.phase, GamePhase::Finished);
+        assert_eq!(room.winner_id, Some(host));
+        assert!(room.status_message.contains("wins with 2400"));
+    }
+
+    #[test]
+    fn end_game_tie_has_no_winner() {
+        let mut room = room_with_two();
+        room.players[0].score = 1500;
+        room.players[0].on_board = true;
+        room.players[1].score = 1500;
+        room.players[1].on_board = true;
+        room.end_game(room.host_id).unwrap();
+        assert_eq!(room.phase, GamePhase::Finished);
+        assert_eq!(room.winner_id, None);
+        assert!(room.status_message.contains("No winner"));
+    }
+
+    #[test]
+    fn end_game_applies_pending_bank() {
+        let mut room = room_with_two();
+        let host = room.host_id;
+        room.players[0].score = 1000;
+        room.players[0].on_board = true;
+        room.players[1].score = 2000;
+        room.players[1].on_board = true;
+        room.pending_bank = Some(PendingBank {
+            player_id: host,
+            points: 400,
+            leftover: 2,
+        });
+        room.phase = GamePhase::StealWindow;
+        room.end_game(host).unwrap();
+        assert_eq!(room.players[0].score, 1400);
+        assert_eq!(room.winner_id, Some(room.players[1].id));
+        assert!(room.pending_bank.is_none());
+    }
+
+    #[test]
+    fn cannot_end_game_in_lobby() {
+        let mut room = Room::new("LOBBY".into(), player("Host"));
+        room.players.push(player("Guest"));
+        assert!(room.end_game(room.host_id).is_err());
     }
 }

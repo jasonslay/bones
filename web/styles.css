@@ -156,6 +156,11 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   border: 2px solid var(--ivory-dim);
 }
 
+.btn.danger {
+  border: 2px solid var(--danger);
+  color: #f0c4bc;
+}
+
 .btn.tiny {
   font-size: 0.95rem;
   padding: 0.4rem 0.75rem;

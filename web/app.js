@@ -373,6 +373,13 @@ function renderActions(g) {
     b.textContent = label;
     b.disabled = !!opts.disabled;
     b.addEventListener("click", () => {
+      if (type === "end_game") {
+        if (!window.confirm("End the game now? Highest score on the board wins.")) {
+          return;
+        }
+        send({ type: "end_game" });
+        return;
+      }
       const indices = [...state.selected].sort((a, b) => a - b);
       if (type === "roll" || type === "bank") {
         send({ type, indices });
@@ -410,23 +417,21 @@ function renderActions(g) {
       wait.textContent = "Waiting on the next player…";
       root.appendChild(wait);
     }
-    return;
-  }
-
-  if (!g.you_can_act) {
+  } else if (!g.you_can_act) {
     const wait = document.createElement("p");
     wait.textContent = "Waiting for your turn…";
     root.appendChild(wait);
-    return;
-  }
-
-  if (g.awaiting_keep) {
+  } else if (g.awaiting_keep) {
     const held = scoreHeld(heldFaces(g));
     const canScore = held.points > 0 || held.autoWin;
     add("Roll", "roll", { disabled: !canScore });
     add("Bank", "bank", { className: "ghost", disabled: !canScore });
   } else {
     add("Roll", "roll");
+  }
+
+  if (g.you_are === g.host_id) {
+    add("End game", "end_game", { className: "danger" });
   }
 }
 

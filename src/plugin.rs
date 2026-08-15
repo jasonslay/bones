@@ -128,6 +128,9 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
                 room.decline_steal(player_id)
             });
         }
+        ClientMessage::EndGame => {
+            with_room_mut(world, channels, player_id, |room| room.end_game(player_id));
+        }
         ClientMessage::Rematch => {
             with_room_mut(world, channels, player_id, |room| room.rematch(player_id));
         }
