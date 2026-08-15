@@ -233,6 +233,7 @@ function renderGame() {
   if (!g) return;
   showScreen("game");
   applyInvite(g.code, g.invite_path);
+  $("invite-bar")?.classList.toggle("hidden", g.phase !== "lobby");
   $("status").textContent = g.message || "";
   renderTurnBanner(g);
 
