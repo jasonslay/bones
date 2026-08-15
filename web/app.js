@@ -249,19 +249,62 @@ function renderGame() {
     board.appendChild(chip);
   }
 
-  const tp = $("turn-points");
-  if (g.phase === "playing" || g.phase === "steal_window") {
-    tp.classList.remove("hidden");
-    tp.innerHTML = `Turn: <strong>${g.turn_points}</strong>`;
-    if (g.pending_bank) {
-      tp.innerHTML += ` · pending bank <strong>${g.pending_bank.points}</strong>`;
-    }
-  } else {
-    tp.classList.add("hidden");
-  }
-
+  updateTurnScore(g);
   renderDice(g);
   renderActions(g);
+}
+
+function scoreHeld(faces) {
+  const counts = [0, 0, 0, 0, 0, 0, 0];
+  for (const face of faces) {
+    if (face >= 1 && face <= 6) counts[face] += 1;
+  }
+  for (let face = 1; face <= 6; face++) {
+    if (counts[face] === 5) {
+      return { points: face === 1 ? 2000 : 0, autoWin: face !== 1 };
+    }
+  }
+  let points = 0;
+  for (let face = 1; face <= 6; face++) {
+    let c = counts[face];
+    if (!c) continue;
+    if (c >= 4) {
+      points += face * 1000;
+      c -= 4;
+    } else if (c >= 3) {
+      points += face === 1 ? 1000 : face * 100;
+      c -= 3;
+    }
+    if (face === 1) points += c * 100;
+    else if (face === 5) points += c * 50;
+  }
+  return { points, autoWin: false };
+}
+
+function heldFaces(g) {
+  return [...state.selected].map((i) => g.dice[i]).filter((f) => f >= 1 && f <= 6);
+}
+
+function updateTurnScore(g) {
+  const tp = $("turn-points");
+  if (g.phase !== "playing" && g.phase !== "steal_window") {
+    tp.classList.add("hidden");
+    return;
+  }
+  tp.classList.remove("hidden");
+  let shown = g.turn_points;
+  if (g.awaiting_keep && !g.bust) {
+    const held = scoreHeld(heldFaces(g));
+    if (held.autoWin) {
+      tp.innerHTML = `Turn: <strong>${g.turn_points}</strong> · five of a kind wins`;
+      return;
+    }
+    shown += held.points;
+  }
+  tp.innerHTML = `Turn: <strong>${shown}</strong>`;
+  if (g.pending_bank) {
+    tp.innerHTML += ` · pending bank <strong>${g.pending_bank.points}</strong>`;
+  }
 }
 
 function renderDice(g) {
@@ -290,6 +333,7 @@ function renderDice(g) {
       else state.selected.add(i);
       renderDice(g);
       renderActions(g);
+      updateTurnScore(g);
     });
     root.appendChild(btn);
   });
@@ -354,9 +398,10 @@ function renderActions(g) {
   }
 
   if (g.awaiting_keep) {
-    const needPick = state.selected.size === 0;
-    add("Roll", "roll", { disabled: needPick });
-    add("Bank", "bank", { className: "ghost", disabled: needPick });
+    const held = scoreHeld(heldFaces(g));
+    const canScore = held.points > 0 || held.autoWin;
+    add("Roll", "roll", { disabled: !canScore });
+    add("Bank", "bank", { className: "ghost", disabled: !canScore });
   } else {
     add("Roll", "roll");
   }

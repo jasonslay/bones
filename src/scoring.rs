@@ -79,6 +79,97 @@ pub fn score_dice(dice: &[u8]) -> Option<ScoreOutcome> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldScore {
+    pub points: u32,
+    pub auto_win: bool,
+    pub used: Vec<usize>,
+}
+
+/// Score only complete combinations in a selection. Dead leftover faces
+/// (e.g. a lone 6, or a 2 next to three 6s) are ignored, not rejected.
+pub fn score_held(dice: &[u8], selected: &[usize]) -> Option<HeldScore> {
+    if selected.is_empty() {
+        return None;
+    }
+    let mut seen = vec![false; dice.len()];
+    let mut by_face: [Vec<usize>; 7] = Default::default();
+    for &i in selected {
+        if i >= dice.len() || seen[i] {
+            return None;
+        }
+        let face = dice[i];
+        if !(1..=6).contains(&face) {
+            return None;
+        }
+        seen[i] = true;
+        by_face[face as usize].push(i);
+    }
+
+    for face in 1..=6 {
+        if by_face[face].len() == 5 {
+            if face == 1 {
+                return Some(HeldScore {
+                    points: 2000,
+                    auto_win: false,
+                    used: by_face[1].clone(),
+                });
+            }
+            return Some(HeldScore {
+                points: 0,
+                auto_win: true,
+                used: by_face[face].clone(),
+            });
+        }
+    }
+
+    let mut points = 0u32;
+    let mut used = Vec::new();
+    for face in 1..=6 {
+        let idxs = &by_face[face];
+        let mut c = idxs.len();
+        if c == 0 {
+            continue;
+        }
+        let mut take = 0usize;
+        if c >= 4 {
+            points += (face as u32) * 1000;
+            take += 4;
+            c -= 4;
+        } else if c >= 3 {
+            if face == 1 {
+                points += 1000;
+            } else {
+                points += (face as u32) * 100;
+            }
+            take += 3;
+            c -= 3;
+        }
+        match face {
+            1 => {
+                points += (c as u32) * 100;
+                take += c;
+            }
+            5 => {
+                points += (c as u32) * 50;
+                take += c;
+            }
+            _ => {}
+        }
+        used.extend(idxs.iter().copied().take(take));
+    }
+
+    if points == 0 {
+        None
+    } else {
+        Some(HeldScore {
+            points,
+            auto_win: false,
+            used,
+        })
+    }
+}
+
 pub fn has_any_score(dice: &[u8]) -> bool {
     if dice.is_empty() {
         return false;
@@ -162,5 +253,25 @@ mod tests {
         assert!(score_selection(&[1, 2, 5], &[0, 2]).is_some());
         assert!(score_selection(&[1, 2, 5], &[0, 1]).is_none());
         assert!(score_selection(&[1, 2, 5], &[0, 0]).is_none());
+    }
+
+    #[test]
+    fn held_ignores_incomplete_and_dead() {
+        assert!(score_held(&[6, 6, 2, 3, 4], &[0]).is_none());
+        assert!(score_held(&[6, 6, 2, 3, 4], &[0, 1]).is_none());
+        assert_eq!(score_held(&[6, 6, 6, 2, 3], &[0, 1, 2]).unwrap().points, 600);
+        assert_eq!(
+            score_held(&[6, 6, 6, 2, 3], &[0, 1, 2, 3]).unwrap().points,
+            600
+        );
+        assert_eq!(
+            score_held(&[6, 6, 6, 2, 3], &[0, 1, 2, 3])
+                .unwrap()
+                .used
+                .len(),
+            3
+        );
+        assert_eq!(score_held(&[1, 6, 2], &[0, 1]).unwrap().points, 100);
+        assert_eq!(score_held(&[1, 1, 1, 6], &[0, 1, 2]).unwrap().points, 1000);
     }
 }

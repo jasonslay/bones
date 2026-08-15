@@ -2,7 +2,7 @@ use crate::protocol::{
     BOARD_THRESHOLD, DICE_COUNT, GamePhase, GameView, PendingBankView, PlayerView, WIN_SCORE,
     invite_path,
 };
-use crate::scoring::{has_any_score, score_dice, score_selection};
+use crate::scoring::{has_any_score, score_dice, score_held};
 use bevy::prelude::*;
 use rand::RngExt;
 use std::collections::HashMap;
@@ -318,8 +318,8 @@ impl Room {
             return Err("Roll first".into());
         }
 
-        let outcome = score_selection(&self.dice, &indices)
-            .ok_or_else(|| "Those dice don't form a valid scoring set".to_string())?;
+        let outcome = score_held(&self.dice, &indices)
+            .ok_or_else(|| "Select a scoring combination first".to_string())?;
 
         if outcome.auto_win {
             self.winner_id = Some(player_id);
@@ -333,7 +333,7 @@ impl Room {
         }
 
         self.turn_points += outcome.points;
-        self.selected = indices;
+        self.selected = outcome.used;
         self.awaiting_keep = false;
         self.steal_leftover = self.dice.len().saturating_sub(self.selected.len());
 
