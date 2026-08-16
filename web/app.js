@@ -233,7 +233,11 @@ function renderGame() {
   if (!g) return;
   showScreen("game");
   applyInvite(g.code, g.invite_path);
-  $("invite-bar")?.classList.toggle("hidden", g.phase !== "lobby");
+  const showInvite = g.phase === "lobby";
+  document.querySelectorAll(".invite-bar").forEach((el) => {
+    el.classList.toggle("hidden", !showInvite);
+  });
+  $("screen-game")?.classList.toggle("in-play", !showInvite);
   $("status").textContent = g.message || "";
   renderTurnBanner(g);
 
