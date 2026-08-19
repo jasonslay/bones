@@ -251,17 +251,19 @@ function renderGame() {
     if (!p.on_board) chip.classList.add("off-board");
     if (p.forfeited) chip.classList.add("forfeited");
     const you = p.id === g.you_are ? " (you)" : "";
-    const turnBadge = isActing
-      ? `<span class="badge turn">${g.phase === "steal_window" ? "steal" : "turn"}</span>`
-      : "";
+    const badges = [
+      isActing
+        ? `<span class="badge turn">${g.phase === "steal_window" ? "steal" : "turn"}</span>`
+        : "",
+      p.forfeited ? '<span class="badge forfeit">forfeited</span>' : "",
+      p.on_board || p.forfeited ? "" : '<span class="badge">off board</span>',
+      p.connected ? "" : '<span class="badge">away</span>',
+      g.winner_id === p.id ? '<span class="badge winner">winner</span>' : "",
+    ].join("");
     chip.innerHTML = `
       <span class="pname">${escapeHtml(p.name)}${you}</span>
       <span class="pscore">${p.score}</span>
-      ${turnBadge}
-      ${p.forfeited ? '<span class="badge forfeit">forfeited</span>' : ""}
-      ${p.on_board || p.forfeited ? "" : '<span class="badge">off board</span>'}
-      ${!p.connected ? '<span class="badge">away</span>' : ""}
-      ${g.winner_id === p.id ? '<span class="badge winner">winner</span>' : ""}
+      <span class="badges">${badges}</span>
     `;
     board.appendChild(chip);
   }

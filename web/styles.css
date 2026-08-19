@@ -338,9 +338,25 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   margin-bottom: 1.5rem;
 }
 
-.player-chip { display: flex; flex-direction: column; gap: 0.15rem; min-width: 5.5rem; padding: 0.4rem 0.55rem 0.45rem; border: 2px solid transparent; border-radius: 0.4rem; }
+.player-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 5.5rem;
+  min-height: 6.15rem;
+  padding: 0.4rem 0.55rem 0.45rem;
+  border: 2px solid transparent;
+  border-radius: 0.4rem;
+}
 .player-chip .pname { font-size: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ivory); }
 .player-chip .pscore { font-family: var(--font-brand); font-size: 1.8rem; line-height: 1; color: var(--ivory); }
+.player-chip .badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 0.2rem;
+  min-height: 1.45rem;
+}
 .player-chip.active {
   border-color: var(--gold);
   background: rgba(212, 168, 75, 0.14);
@@ -350,7 +366,6 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 .player-chip .badge {
   display: inline-block;
   width: fit-content;
-  margin-top: 0.15rem;
   padding: 0.12rem 0.4rem;
   border-radius: 0.2rem;
   font-size: 0.72rem;
@@ -359,6 +374,7 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   text-transform: uppercase;
   color: var(--ivory);
   background: rgba(0, 0, 0, 0.35);
+  line-height: 1.2;
 }
 .player-chip .badge.turn {
   color: var(--ink);
