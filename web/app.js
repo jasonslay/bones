@@ -350,8 +350,8 @@ function syncDieAppearance(g) {
     const keepable = canKeepDie(g.dice, i);
     btn.classList.toggle("selected", state.selected.has(i) && keepable);
     btn.classList.toggle("bust", !!g.bust);
-    btn.classList.toggle("dead", !!g.bust || !keepable);
-    btn.disabled = !selectable || !keepable;
+    btn.classList.toggle("dead", !!g.bust || (!keepable && !state.selected.has(i)));
+    btn.disabled = !selectable || (!keepable && !state.selected.has(i));
   });
 }
 
@@ -375,10 +375,13 @@ function renderDice(g) {
       faceEl.appendChild(dieFaceSvg(face));
       btn.appendChild(faceEl);
       btn.addEventListener("click", () => {
-        if (btn.disabled) return;
-        if (state.selected.has(i)) state.selected.delete(i);
-        else if (canKeepDie(g.dice, i)) state.selected.add(i);
-        else return;
+        if (state.selected.has(i)) {
+          state.selected.delete(i);
+        } else {
+          if (btn.disabled) return;
+          if (!canKeepDie(g.dice, i)) return;
+          state.selected.add(i);
+        }
         syncDieAppearance(state.game);
         renderActions(state.game);
         updateTurnScore(state.game);

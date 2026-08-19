@@ -434,6 +434,28 @@ impl Room {
         Ok(())
     }
 
+    fn check_bank_legal(&self, points: u32) -> Result<(), String> {
+        if points == 0 {
+            return Err("Nothing to bank".into());
+        }
+        let cur = self.current_player().ok_or("No current player")?;
+        if !cur.on_board {
+            if points < BOARD_THRESHOLD {
+                return Err(format!(
+                    "Need at least {BOARD_THRESHOLD} in one turn to get on the board"
+                ));
+            }
+            return Ok(());
+        }
+        let new_score = cur.score.saturating_add(points);
+        if new_score > WIN_SCORE {
+            return Err(format!(
+                "Must hit exactly {WIN_SCORE}. Banking would make {new_score}."
+            ));
+        }
+        Ok(())
+    }
+
     pub fn bank(&mut self, player_id: Uuid, indices: Vec<usize>) -> Result<(), String> {
         if self.phase != GamePhase::Playing {
             return Err("Cannot bank now".into());
@@ -442,13 +464,18 @@ impl Room {
             return Err("Not your turn".into());
         }
         if self.awaiting_keep {
+            let outcome = score_held(&self.dice, &indices)
+                .ok_or_else(|| "Select a scoring combination first".to_string())?;
+            if outcome.auto_win {
+                return self.keep(player_id, indices);
+            }
+            self.check_bank_legal(self.turn_points.saturating_add(outcome.points))?;
             self.keep(player_id, indices)?;
             if self.phase != GamePhase::Playing || self.winner_id.is_some() {
                 return Ok(());
             }
-        }
-        if self.turn_points == 0 {
-            return Err("Nothing to bank".into());
+        } else {
+            self.check_bank_legal(self.turn_points)?;
         }
 
         let cur = self.current_player().ok_or("No current player")?;
@@ -459,11 +486,6 @@ impl Room {
         let leftover = self.steal_leftover;
 
         if !on_board {
-            if points < BOARD_THRESHOLD {
-                return Err(format!(
-                    "Need at least {BOARD_THRESHOLD} in one turn to get on the board"
-                ));
-            }
             let player = self.current_player_mut().unwrap();
             player.score = points;
             player.on_board = true;
@@ -473,11 +495,6 @@ impl Room {
         }
 
         let new_score = score + points;
-        if new_score > WIN_SCORE {
-            return Err(format!(
-                "Must hit exactly {WIN_SCORE}. Banking would make {new_score}."
-            ));
-        }
         if new_score == WIN_SCORE {
             let player = self.current_player_mut().unwrap();
             player.score = WIN_SCORE;
@@ -1025,6 +1042,27 @@ mod tests {
         assert!(room.view_for(b).selected.is_empty());
         room.select(a, vec![0, 2]).unwrap();
         assert_eq!(room.selected, vec![0]);
+    }
+
+    #[test]
+    fn bank_overshoot_lets_you_unmark_and_win() {
+        let mut room = room_with_two();
+        let id = room.players[0].id;
+        room.players[0].score = 9_900;
+        room.players[0].on_board = true;
+        room.dice = vec![1, 1, 5];
+        room.awaiting_keep = true;
+        let err = room.bank(id, vec![0, 1, 2]).unwrap_err();
+        assert!(err.contains("exactly") || err.contains("10,000") || err.contains("10000"));
+        assert!(room.awaiting_keep);
+        assert_eq!(room.turn_points, 0);
+        assert_eq!(room.players[0].score, 9_900);
+        room.select(id, vec![0]).unwrap();
+        assert_eq!(room.selected, vec![0]);
+        room.bank(id, vec![0]).unwrap();
+        assert_eq!(room.phase, GamePhase::Finished);
+        assert_eq!(room.winner_id, Some(id));
+        assert_eq!(room.players[0].score, 10_000);
     }
 
     #[test]
