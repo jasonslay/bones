@@ -201,10 +201,9 @@ function onServer(msg) {
       {
         const facesKey = (msg.dice || []).join(",");
         const kept = (msg.selected || []).filter((i) => canKeepDie(msg.dice || [], i));
-        if (state._facesKey !== facesKey) {
-          state.selected = new Set(kept);
-          state._facesKey = facesKey;
-        } else if (!msg.you_can_act) {
+        const facesChanged = state._facesKey !== facesKey;
+        state._facesKey = facesKey;
+        if (facesChanged || !isPickingKeep(msg)) {
           state.selected = new Set(kept);
         }
       }
@@ -336,6 +335,15 @@ function diceSelectable(g) {
   );
 }
 
+function isPickingKeep(g) {
+  return diceSelectable(g);
+}
+
+function selectedSet(g) {
+  if (isPickingKeep(g)) return state.selected;
+  return new Set((g.selected || []).filter((i) => canKeepDie(g.dice || [], i)));
+}
+
 function canKeepDie(dice, index) {
   const face = dice[index];
   if (face === 1 || face === 5) return true;
@@ -345,13 +353,14 @@ function canKeepDie(dice, index) {
 
 function syncDieAppearance(g) {
   const selectable = diceSelectable(g);
+  const selected = selectedSet(g);
   const root = $("dice");
   [...root.children].forEach((btn, i) => {
     const keepable = canKeepDie(g.dice, i);
-    btn.classList.toggle("selected", state.selected.has(i) && keepable);
+    btn.classList.toggle("selected", selected.has(i) && keepable);
     btn.classList.toggle("bust", !!g.bust);
-    btn.classList.toggle("dead", !!g.bust || (!keepable && !state.selected.has(i)));
-    btn.disabled = !selectable || (!keepable && !state.selected.has(i));
+    btn.classList.toggle("dead", !!g.bust || (!keepable && !selected.has(i)));
+    btn.disabled = !selectable || (!keepable && !selected.has(i));
   });
 }
 
