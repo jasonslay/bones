@@ -310,14 +310,12 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 }
 
 .status {
-  margin: 0;
-  padding: 0.45rem 0 0.35rem;
-  font-size: 1.15rem;
-}
-
-.turn-banner.hidden + .status {
-  padding-top: 0.75rem;
+  margin: 1.1rem 0 0;
+  padding: 0.65rem 0 0;
   border-top: 1px solid rgba(243, 234, 215, 0.2);
+  font-size: 1.05rem;
+  line-height: 1.35;
+  color: var(--ivory-dim);
 }
 
 .turn-timer {

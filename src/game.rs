@@ -289,11 +289,9 @@ impl Room {
             self.reset_turn_state();
         }
         if let Some(p) = self.current_player() {
-            let next = format!("{}'s turn — {}", p.name, Self::turn_hint(p.on_board));
-            if keep_dice {
-                self.status_message = format!("{} {next}", self.status_message);
-            } else {
-                self.status_message = next;
+            if !keep_dice {
+                self.status_message =
+                    format!("{}'s turn — {}", p.name, Self::turn_hint(p.on_board));
             }
         }
         self.set_action_deadline();
@@ -358,7 +356,7 @@ impl Room {
                 .current_player()
                 .map(|p| p.name.clone())
                 .unwrap_or_default();
-            self.status_message = format!("{name} busted! No scoring dice.");
+            self.status_message = format!("{name} busted.");
             self.turn_points = 0;
             self.begin_next_turn(true);
             return Ok(());
@@ -579,7 +577,7 @@ impl Room {
             if let Some(idx) = self.player_index(pending.player_id) {
                 self.players[idx].score += pending.points;
             }
-            self.status_message = format!("{name} failed the steal — bust!");
+            self.status_message = format!("{name} busted the steal.");
             self.turn_points = 0;
             self.begin_next_turn(true);
             return Ok(());
@@ -843,7 +841,7 @@ mod tests {
         let b = room.players[1].id;
         room.dice = vec![2, 3, 4, 6, 6];
         room.awaiting_keep = true;
-        room.status_message = format!("{} busted! No scoring dice.", room.players[0].name);
+        room.status_message = format!("{} busted.", room.players[0].name);
         room.turn_points = 0;
         room.begin_next_turn(true);
         assert_eq!(room.dice, vec![2, 3, 4, 6, 6]);
@@ -854,6 +852,7 @@ mod tests {
         let view = room.view_for(b);
         assert!(view.bust);
         assert_eq!(view.dice, vec![2, 3, 4, 6, 6]);
+        assert_eq!(view.message, format!("{} busted.", room.players[0].name));
     }
 
     #[test]
