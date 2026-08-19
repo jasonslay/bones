@@ -340,22 +340,31 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 
 .player-chip {
   display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.4rem;
   min-width: 5.5rem;
-  min-height: 6.15rem;
   padding: 0.4rem 0.55rem 0.45rem;
   border: 2px solid transparent;
   border-radius: 0.4rem;
+}
+.player-chip .pinfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
 }
 .player-chip .pname { font-size: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ivory); }
 .player-chip .pscore { font-family: var(--font-brand); font-size: 1.8rem; line-height: 1; color: var(--ivory); }
 .player-chip .badges {
   display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 0.2rem;
-  min-height: 1.45rem;
+  flex-shrink: 0;
+}
+.player-chip .badges:empty {
+  display: none;
 }
 .player-chip.active {
   border-color: var(--gold);

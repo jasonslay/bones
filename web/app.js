@@ -261,8 +261,10 @@ function renderGame() {
       g.winner_id === p.id ? '<span class="badge winner">winner</span>' : "",
     ].join("");
     chip.innerHTML = `
-      <span class="pname">${escapeHtml(p.name)}${you}</span>
-      <span class="pscore">${p.score}</span>
+      <span class="pinfo">
+        <span class="pname">${escapeHtml(p.name)}${you}</span>
+        <span class="pscore">${p.score}</span>
+      </span>
       <span class="badges">${badges}</span>
     `;
     board.appendChild(chip);
