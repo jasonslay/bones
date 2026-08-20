@@ -248,6 +248,7 @@ function renderGame() {
     chip.className = "player-chip";
     const isActing = !!(actor && p.id === actor.id && !p.forfeited);
     if (isActing) chip.classList.add("active");
+    if (p.on_board && !p.forfeited) chip.classList.add("on-board");
     if (!p.on_board) chip.classList.add("off-board");
     if (p.forfeited) chip.classList.add("forfeited");
     const you = p.id === g.you_are ? " (you)" : "";
@@ -256,7 +257,6 @@ function renderGame() {
         ? `<span class="badge turn">${g.phase === "steal_window" ? "steal" : "turn"}</span>`
         : "",
       p.forfeited ? '<span class="badge forfeit">forfeited</span>' : "",
-      p.on_board || p.forfeited ? "" : '<span class="badge">off board</span>',
       p.connected ? "" : '<span class="badge">away</span>',
       g.winner_id === p.id ? '<span class="badge winner">winner</span>' : "",
     ].join("");

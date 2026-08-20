@@ -366,6 +366,13 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 .player-chip .badges:empty {
   display: none;
 }
+.player-chip.on-board {
+  border-color: rgba(243, 234, 215, 0.45);
+}
+.player-chip.off-board .pname,
+.player-chip.off-board .pscore {
+  color: var(--ivory-dim);
+}
 .player-chip.active {
   border-color: var(--gold);
   background: rgba(212, 168, 75, 0.14);
