@@ -409,10 +409,6 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   background: rgba(0, 0, 0, 0.35);
   line-height: 1.2;
 }
-.player-chip .badge.turn {
-  color: var(--ink);
-  background: var(--gold);
-}
 .player-chip .badge.winner {
   color: var(--ink);
   background: var(--gold);

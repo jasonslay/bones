@@ -277,9 +277,6 @@ function renderGame() {
     if (p.forfeited) chip.classList.add("forfeited");
     const you = p.id === g.you_are ? " (you)" : "";
     const badges = [
-      isActing
-        ? `<span class="badge turn">${g.phase === "steal_window" ? "steal" : "turn"}</span>`
-        : "",
       p.forfeited ? '<span class="badge forfeit">forfeited</span>' : "",
       p.connected ? "" : '<span class="badge">away</span>',
       g.winner_id === p.id ? '<span class="badge winner">winner</span>' : "",
