@@ -31,6 +31,7 @@ const state = {
   playerName: localStorage.getItem("bones-name") || "",
   seatKey: null,
   game: null,
+  boundCode: null,
   selected: new Set(),
   reconnecting: false,
 };
@@ -61,6 +62,13 @@ function seatKey() {
     key = makeUuid();
     localStorage.setItem("bones-seat", key);
   }
+  state.seatKey = key;
+  return key;
+}
+
+function rotateSeatKey() {
+  const key = makeUuid();
+  localStorage.setItem("bones-seat", key);
   state.seatKey = key;
   return key;
 }
@@ -194,10 +202,12 @@ function onServer(msg) {
       break;
     case "game_created":
     case "joined":
+      state.boundCode = msg.code;
       applyInvite(msg.code, msg.invite_path);
       localStorage.setItem("bones-room", msg.code);
       break;
     case "state":
+      if (!state.boundCode || msg.code !== state.boundCode) break;
       {
         const facesKey = (msg.dice || []).join(",");
         const kept = (msg.selected || []).filter((i) => canKeepDie(msg.dice || [], i));
@@ -216,6 +226,20 @@ function onServer(msg) {
     default:
       break;
   }
+}
+
+function leaveTable() {
+  send({ type: "leave_game" });
+  state.game = null;
+  state.boundCode = null;
+  state.selected = new Set();
+  localStorage.removeItem("bones-room");
+  history.replaceState(null, "", "/");
+  const wrap = $("join-code-wrap");
+  if (wrap) wrap.classList.add("hidden");
+  const codeInput = $("join-code");
+  if (codeInput) codeInput.value = "";
+  showScreen("home");
 }
 
 function showHomeError(text) {
@@ -447,6 +471,12 @@ function renderActions(g) {
 
   if (g.phase === "finished") {
     if (g.you_are === g.host_id) add("Rematch", "rematch");
+    const leave = document.createElement("button");
+    leave.type = "button";
+    leave.className = "btn ghost";
+    leave.textContent = "Leave table";
+    leave.addEventListener("click", leaveTable);
+    root.appendChild(leave);
     return;
   }
 
@@ -455,6 +485,12 @@ function renderActions(g) {
     const wait = document.createElement("p");
     wait.textContent = "You forfeited — watching.";
     root.appendChild(wait);
+    const leave = document.createElement("button");
+    leave.type = "button";
+    leave.className = "btn ghost";
+    leave.textContent = "Leave table";
+    leave.addEventListener("click", leaveTable);
+    root.appendChild(leave);
     return;
   }
 
@@ -593,7 +629,11 @@ async function boot() {
         await new Promise((r) => setTimeout(r, 80));
       }
       if (intent === "create") {
-        send({ type: "create_game", name, seat_key: seatKey() });
+        send({ type: "leave_game" });
+        state.game = null;
+        state.boundCode = null;
+        localStorage.removeItem("bones-room");
+        send({ type: "create_game", name, seat_key: rotateSeatKey() });
         return;
       }
       let joinCode = ($("join-code").value || pathCode()).trim().toUpperCase();
@@ -608,6 +648,8 @@ async function boot() {
       showHomeError(err.message || "Connection failed");
     }
   });
+
+  $("leave-table")?.addEventListener("click", leaveTable);
 
   $("settings-end-game")?.addEventListener("click", () => {
     if (!window.confirm("End the game now? Highest score on the board wins.")) return;
@@ -649,21 +691,6 @@ async function boot() {
       }
     }
   });
-
-  if (code && state.playerName) {
-    try {
-      await connect();
-      await new Promise((r) => setTimeout(r, 80));
-      send({
-        type: "join_game",
-        code,
-        name: state.playerName,
-        seat_key: seatKey(),
-      });
-    } catch (err) {
-      showHomeError(err.message || "Connection failed");
-    }
-  }
 }
 
 boot();

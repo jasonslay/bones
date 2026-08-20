@@ -204,6 +204,23 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   color: var(--gold);
 }
 
+.leave-table {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ivory-dim);
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.leave-table:hover {
+  color: var(--ivory);
+}
+
 .game-settings {
   margin: 1.35rem auto 0;
   max-width: 16rem;

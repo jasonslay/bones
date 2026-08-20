@@ -40,6 +40,7 @@ pub enum ClientMessage {
     EndGame,
     Forfeit,
     Rematch,
+    LeaveGame,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

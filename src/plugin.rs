@@ -57,10 +57,7 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
     match msg {
         ClientMessage::CreateGame { name, seat_key } => {
             let name = sanitize_name(&name);
-            if let Some(code) = find_room_for_seat(world, seat_key) {
-                join_or_reclaim(world, channels, player_id, &code, name, seat_key);
-                return;
-            }
+            vacate_seat(world, channels, seat_key, None);
             let code = unique_code(world);
             let player = Player {
                 id: player_id,
@@ -97,6 +94,7 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
         } => {
             let code = code.trim().to_uppercase();
             let name = sanitize_name(&name);
+            vacate_seat(world, channels, seat_key, Some(&code));
             join_or_reclaim(world, channels, player_id, &code, name, seat_key);
         }
         ClientMessage::StartGame => {
@@ -147,19 +145,84 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
         ClientMessage::Rematch => {
             with_room_mut(world, channels, player_id, |room| room.rematch(player_id));
         }
+        ClientMessage::LeaveGame => {
+            leave_player(world, channels, player_id);
+        }
     }
 }
 
-fn find_room_for_seat(world: &World, seat_key: Uuid) -> Option<String> {
-    let rooms = world.resource::<GameRooms>();
-    for (code, entity) in &rooms.by_code {
-        if let Some(room) = world.get::<Room>(*entity) {
-            if room.seat_index(seat_key).is_some() {
-                return Some(code.clone());
+fn leave_player(world: &mut World, channels: &NetChannels, player_id: Uuid) {
+    let seat_key = {
+        let code = channels
+            .player_rooms
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&player_id).cloned());
+        let Some(code) = code else {
+            return;
+        };
+        let entity = world.resource::<GameRooms>().by_code.get(&code).copied();
+        let Some(entity) = entity else {
+            return;
+        };
+        world.get::<Room>(entity).and_then(|room| {
+            room.player_index(player_id)
+                .map(|i| room.players[i].seat_key)
+        })
+    };
+    if let Some(seat_key) = seat_key {
+        vacate_seat(world, channels, seat_key, None);
+    }
+}
+
+fn vacate_seat(
+    world: &mut World,
+    channels: &NetChannels,
+    seat_key: Uuid,
+    keep_code: Option<&str>,
+) {
+    let targets: Vec<(String, Entity)> = world
+        .resource::<GameRooms>()
+        .by_code
+        .iter()
+        .filter(|(code, _)| keep_code != Some(code.as_str()))
+        .map(|(code, entity)| (code.clone(), *entity))
+        .collect();
+
+    let mut empty = Vec::new();
+    let mut dirty = Vec::new();
+    for (code, entity) in targets {
+        let Some(mut room) = world.get_mut::<Room>(entity) else {
+            continue;
+        };
+        let Some((old_id, is_empty)) = room.vacate_seat(seat_key) else {
+            continue;
+        };
+        if is_empty {
+            empty.push((code.clone(), entity));
+        } else {
+            dirty.push(code.clone());
+        }
+        drop(room);
+        if let Ok(mut map) = channels.player_rooms.lock() {
+            if map.get(&old_id).is_some_and(|c| c == &code) {
+                map.remove(&old_id);
             }
         }
     }
-    None
+
+    if !empty.is_empty() {
+        let mut rooms = world.resource_mut::<GameRooms>();
+        for (code, _) in &empty {
+            rooms.by_code.remove(code);
+        }
+    }
+    for (_, entity) in empty {
+        world.despawn(entity);
+    }
+    for code in dirty {
+        broadcast_room(world, channels, &code);
+    }
 }
 
 fn track_membership(channels: &NetChannels, player_id: Uuid, code: &str) {

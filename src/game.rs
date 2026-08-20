@@ -174,6 +174,12 @@ impl Room {
         self.players[idx].id = new_id;
         self.players[idx].connected = true;
         self.players[idx].name = name;
+        self.retarget_player_id(old_id, new_id);
+        self.status_message = format!("{} reconnected", self.players[idx].name);
+        Ok(old_id)
+    }
+
+    fn retarget_player_id(&mut self, old_id: Uuid, new_id: Uuid) {
         if self.host_id == old_id {
             self.host_id = new_id;
         }
@@ -185,8 +191,45 @@ impl Room {
                 pending.player_id = new_id;
             }
         }
-        self.status_message = format!("{} reconnected", self.players[idx].name);
-        Ok(old_id)
+    }
+
+    /// Drop this seat from a lobby, or unbind the live connection from a started game.
+    /// Returns the connection id that was sitting in the seat.
+    pub fn vacate_seat(&mut self, seat_key: Uuid) -> Option<(Uuid, bool)> {
+        let idx = self.seat_index(seat_key)?;
+        if self.phase == GamePhase::Lobby {
+            let removed = self.players.remove(idx);
+            if !self.players.is_empty() && self.host_id == removed.id {
+                self.host_id = self.players[0].id;
+            }
+            if !self.players.is_empty() {
+                self.status_message = format!(
+                    "{} left — {} player(s).",
+                    removed.name,
+                    self.players.len()
+                );
+            }
+            return Some((removed.id, self.players.is_empty()));
+        }
+
+        let pid = self.players[idx].id;
+        if matches!(self.phase, GamePhase::Playing | GamePhase::StealWindow)
+            && !self.players[idx].forfeited
+        {
+            let _ = self.forfeit(pid, ForfeitCause::Manual);
+        }
+        self.detach_connection(seat_key).map(|id| (id, false))
+    }
+
+    /// Keep the scoreboard row, but stop sending this connection room updates.
+    pub fn detach_connection(&mut self, seat_key: Uuid) -> Option<Uuid> {
+        let idx = self.seat_index(seat_key)?;
+        let old_id = self.players[idx].id;
+        let ghost = Uuid::new_v4();
+        self.players[idx].id = ghost;
+        self.players[idx].connected = false;
+        self.retarget_player_id(old_id, ghost);
+        Some(old_id)
     }
 
     pub fn view_for(&self, you: Uuid) -> GameView {
@@ -1074,5 +1117,60 @@ mod tests {
         room.rematch(a).unwrap();
         assert!(room.players.iter().all(|p| !p.forfeited));
         assert!(room.action_deadline_ms.is_none());
+    }
+
+    #[test]
+    fn vacate_lobby_removes_player_and_transfers_host() {
+        let mut room = Room::new("LOBBY".into(), player("Host"));
+        room.players.push(player("Guest"));
+        let host_id = room.players[0].id;
+        let host_seat = room.players[0].seat_key;
+        let guest_id = room.players[1].id;
+        let (old_id, empty) = room.vacate_seat(host_seat).unwrap();
+        assert_eq!(old_id, host_id);
+        assert!(!empty);
+        assert_eq!(room.players.len(), 1);
+        assert_eq!(room.host_id, guest_id);
+        assert!(room.status_message.contains("left"));
+    }
+
+    #[test]
+    fn vacate_last_lobby_player_empties_room() {
+        let mut room = Room::new("SOLO".into(), player("Host"));
+        let seat = room.players[0].seat_key;
+        let (_, empty) = room.vacate_seat(seat).unwrap();
+        assert!(empty);
+        assert!(room.players.is_empty());
+    }
+
+    #[test]
+    fn vacate_started_game_detaches_without_dropping_row() {
+        let mut room = room_with_two();
+        let seat = room.players[0].seat_key;
+        let old_id = room.players[0].id;
+        let (released, empty) = room.vacate_seat(seat).unwrap();
+        assert_eq!(released, old_id);
+        assert!(!empty);
+        assert_eq!(room.players.len(), 2);
+        assert_ne!(room.players[0].id, old_id);
+        assert!(!room.players[0].connected);
+        assert!(room.players[0].forfeited);
+        assert_eq!(room.phase, GamePhase::Finished);
+    }
+
+    #[test]
+    fn vacate_already_forfeited_does_not_remove_row() {
+        let mut room = room_with_three();
+        let seat = room.players[1].seat_key;
+        let old_id = room.players[1].id;
+        room.forfeit(old_id, ForfeitCause::Manual).unwrap();
+        let (released, empty) = room.vacate_seat(seat).unwrap();
+        assert_eq!(released, old_id);
+        assert!(!empty);
+        assert_eq!(room.players.len(), 3);
+        assert!(room.players[1].forfeited);
+        assert!(!room.players[1].connected);
+        assert_ne!(room.players[1].id, old_id);
+        assert_eq!(room.phase, GamePhase::Playing);
     }
 }
