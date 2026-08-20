@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use plugin::BonesGamePlugin;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::atomic::Ordering;
 use store::StoreEvent;
 
 fn main() {
@@ -69,13 +69,24 @@ fn main() {
     let shutdown = channels.shutdown.clone();
     let bevy_channels = channels.clone();
     let bevy = std::thread::spawn(move || {
-        App::new()
-            .add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
-                Duration::from_millis(50),
-            )))
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins.build().disable::<ScheduleRunnerPlugin>())
             .insert_resource(bevy_channels)
-            .add_plugins(BonesGamePlugin)
-            .run();
+            .add_plugins(BonesGamePlugin);
+        loop {
+            let channels = app.world().resource::<plugin::NetChannels>().clone();
+            channels
+                .bevy_tick_ms
+                .store(crate::game::now_ms(), Ordering::Relaxed);
+            if channels.has_pending() || plugin::timeout_due(app.world()) {
+                app.update();
+                if app.should_exit().is_some() {
+                    break;
+                }
+            }
+            let wait = plugin::next_idle_wait(app.world());
+            channels.wake.wait_timeout(wait);
+        }
     });
 
     rt.block_on(server::serve(channels, web_dir, addr));

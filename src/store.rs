@@ -1,9 +1,9 @@
 use crate::game::Room;
 use crate::plugin::NetChannels;
 use futures_util::StreamExt;
-use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use redis::Client;
+use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -152,6 +152,7 @@ impl Store {
                             if let Ok(mut q) = channels.remote_events.lock() {
                                 q.push(event);
                             }
+                            channels.notify_bevy();
                         }
                         Err(err) => tracing::warn!("bad store event: {err}"),
                     }
@@ -179,27 +180,27 @@ impl Store {
         let json = serde_json::to_string(room).map_err(|e| {
             redis::RedisError::from((redis::ErrorKind::Client, "room json", e.to_string()))
         })?;
-        let event = serde_json::to_string(&StoreEvent::Upsert { room: room.clone() }).map_err(
-            |e| redis::RedisError::from((redis::ErrorKind::Client, "event json", e.to_string())),
-        )?;
+        let event =
+            serde_json::to_string(&StoreEvent::Upsert { room: room.clone() }).map_err(|e| {
+                redis::RedisError::from((redis::ErrorKind::Client, "event json", e.to_string()))
+            })?;
         let expected = match expected {
             None => "new".to_string(),
             Some(v) => v.to_string(),
         };
         let mut conn = self.conn.clone();
-        let mut script = redis::Script::new(SAVE_LUA);
-        script.key(Self::room_key(&room.code));
-        script.key(CHANNEL);
+        let script = redis::Script::new(SAVE_LUA);
+        let mut invoke = script.prepare_invoke();
+        invoke.key(Self::room_key(&room.code));
+        invoke.key(CHANNEL);
         for player in &room.players {
-            script.key(Self::seat_key(player.seat_key));
+            invoke.key(Self::seat_key(player.seat_key));
         }
-        let saved: i32 = script
-            .arg(json)
-            .arg(expected)
-            .arg(ROOM_TTL_SECS)
-            .arg(event)
-            .invoke_async(&mut conn)
-            .await?;
+        invoke.arg(json);
+        invoke.arg(expected);
+        invoke.arg(ROOM_TTL_SECS);
+        invoke.arg(event);
+        let saved: i32 = invoke.invoke_async(&mut conn).await?;
         Ok(saved == 1)
     }
 
@@ -207,7 +208,9 @@ impl Store {
         let event = serde_json::to_string(&StoreEvent::Delete {
             code: code.to_string(),
         })
-        .map_err(|e| redis::RedisError::from((redis::ErrorKind::Client, "event json", e.to_string())))?;
+        .map_err(|e| {
+            redis::RedisError::from((redis::ErrorKind::Client, "event json", e.to_string()))
+        })?;
         let mut conn = self.conn.clone();
         let _: () = conn.del(Self::room_key(code)).await?;
         let _: i32 = conn.publish(CHANNEL, event).await?;
@@ -318,4 +321,3 @@ mod tests {
         assert!(store.get("TSTRS").unwrap().is_none());
     }
 }
-

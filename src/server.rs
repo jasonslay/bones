@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch};
 use tokio::time::MissedTickBehavior;
+use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use uuid::Uuid;
 
 /// Time to flush WebSocket close frames after SIGTERM before forcing exit.
@@ -38,6 +40,7 @@ pub fn new_channels(store: Option<crate::store::Store>) -> NetChannels {
         shutdown,
         store,
         bevy_tick_ms: Arc::new(AtomicU64::new(0)),
+        wake: crate::plugin::Wake::new(),
     }
 }
 
@@ -53,7 +56,14 @@ pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
         .route("/ws", get(ws_handler))
         .route("/", get(index_page))
         .route("/g/{code}", get(index_page))
-        .fallback_service(ServeDir::new(&web_dir))
+        .fallback_service(
+            ServiceBuilder::new()
+                .layer(SetResponseHeaderLayer::overriding(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=31536000, immutable"),
+                ))
+                .service(ServeDir::new(&web_dir)),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
@@ -65,6 +75,7 @@ pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
         wait_for_signal().await;
         tracing::info!("shutdown signal received");
         let _ = shutdown_tx.send(true);
+        channels.notify_bevy();
     });
 
     tokio::select! {
@@ -166,7 +177,10 @@ async fn index_page(State(state): State<AppState>) -> impl IntoResponse {
     let ver = asset_ver(&state.web_dir);
     let page = std::fs::read_to_string(state.web_dir.join("index.html"))
         .unwrap_or_else(|_| "<p>Bones UI missing — run from the project root.</p>".into())
-        .replace("href=\"/styles.css\"", &format!("href=\"/styles.css?v={ver}\""))
+        .replace(
+            "href=\"/styles.css\"",
+            &format!("href=\"/styles.css?v={ver}\""),
+        )
         .replace("src=\"/app.js\"", &format!("src=\"/app.js?v={ver}\""));
     let mut headers = HeaderMap::new();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -251,6 +265,8 @@ async fn client_session(socket: WebSocket, state: AppState) {
                         player_id,
                         msg: client_msg,
                     });
+                    drop(q);
+                    state.channels.notify_bevy();
                 }
                 Err(err) => {
                     if let Ok(map) = state.channels.outbound.lock() {
@@ -274,4 +290,5 @@ async fn client_session(socket: WebSocket, state: AppState) {
     if let Ok(mut d) = state.channels.disconnects.lock() {
         d.push(player_id);
     }
+    state.channels.notify_bevy();
 }

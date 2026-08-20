@@ -3,13 +3,49 @@ use crate::protocol::{ClientMessage, GamePhase, ServerMessage, invite_path};
 use crate::store::{Store, StoreEvent};
 use bevy::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 pub type OutboundMap = Arc<Mutex<HashMap<Uuid, mpsc::UnboundedSender<ServerMessage>>>>;
 pub type PlayerRooms = Arc<Mutex<HashMap<Uuid, String>>>;
+
+/// How long the Bevy thread may sleep while still refreshing `/readyz`.
+pub const BEVY_IDLE_WAKE: Duration = Duration::from_millis(400);
+
+#[derive(Clone)]
+pub struct Wake {
+    inner: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl Wake {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new((Mutex::new(false), Condvar::new())),
+        }
+    }
+
+    pub fn notify(&self) {
+        let (lock, cvar) = &*self.inner;
+        let mut signaled = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *signaled = true;
+        cvar.notify_one();
+    }
+
+    pub fn wait_timeout(&self, timeout: Duration) {
+        let (lock, cvar) = &*self.inner;
+        let mut signaled = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if !*signaled {
+            signaled = match cvar.wait_timeout(signaled, timeout) {
+                Ok((guard, _)) => guard,
+                Err(err) => err.into_inner().0,
+            };
+        }
+        *signaled = false;
+    }
+}
 
 #[derive(Resource, Clone)]
 pub struct NetChannels {
@@ -21,6 +57,55 @@ pub struct NetChannels {
     pub shutdown: watch::Sender<bool>,
     pub store: Option<Store>,
     pub bevy_tick_ms: Arc<AtomicU64>,
+    pub wake: Wake,
+}
+
+impl NetChannels {
+    pub fn notify_bevy(&self) {
+        self.wake.notify();
+    }
+
+    pub fn has_pending(&self) -> bool {
+        if *self.shutdown.borrow() {
+            return true;
+        }
+        self.commands.lock().ok().is_some_and(|q| !q.is_empty())
+            || self.disconnects.lock().ok().is_some_and(|q| !q.is_empty())
+            || self
+                .remote_events
+                .lock()
+                .ok()
+                .is_some_and(|q| !q.is_empty())
+    }
+}
+
+pub fn timeout_due(world: &World) -> bool {
+    let now = crate::game::now_ms();
+    world
+        .resource::<GameRooms>()
+        .by_code
+        .values()
+        .any(|entity| {
+            world
+                .get::<Room>(*entity)
+                .and_then(|room| room.action_deadline_ms)
+                .is_some_and(|deadline| now >= deadline)
+        })
+}
+
+pub fn next_idle_wait(world: &World) -> Duration {
+    let now = crate::game::now_ms();
+    let remaining = world
+        .resource::<GameRooms>()
+        .by_code
+        .values()
+        .filter_map(|entity| world.get::<Room>(*entity)?.action_deadline_ms)
+        .min()
+        .map(|deadline| deadline.saturating_sub(now));
+    match remaining {
+        None | Some(0) => BEVY_IDLE_WAKE,
+        Some(ms) => Duration::from_millis(ms.min(BEVY_IDLE_WAKE.as_millis() as u64).max(1)),
+    }
 }
 
 pub struct NetCommand {
@@ -71,7 +156,6 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
     match msg {
         ClientMessage::CreateGame { name, seat_key } => {
             let name = sanitize_name(&name);
-            vacate_seat(world, channels, seat_key, None);
             let player = Player {
                 id: player_id,
                 seat_key,
@@ -91,6 +175,7 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
                 );
                 return;
             };
+            vacate_seat(world, channels, seat_key, Some(&code));
             track_membership(channels, player_id, &code);
             send(
                 channels,
@@ -110,7 +195,6 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
         } => {
             let code = code.trim().to_uppercase();
             let name = sanitize_name(&name);
-            vacate_seat(world, channels, seat_key, Some(&code));
             join_or_reclaim(world, channels, player_id, &code, name, seat_key);
         }
         ClientMessage::StartGame => {
@@ -192,12 +276,7 @@ fn leave_player(world: &mut World, channels: &NetChannels, player_id: Uuid) {
     }
 }
 
-fn vacate_seat(
-    world: &mut World,
-    channels: &NetChannels,
-    seat_key: Uuid,
-    keep_code: Option<&str>,
-) {
+fn vacate_seat(world: &mut World, channels: &NetChannels, seat_key: Uuid, keep_code: Option<&str>) {
     if let Some(store) = &channels.store {
         if let Ok(Some(code)) = store.get_seat(seat_key) {
             if keep_code != Some(code.as_str()) {
@@ -310,17 +389,18 @@ fn join_or_reclaim(
 
     let result = {
         let mut room = world.get_mut::<Room>(entity).unwrap();
-        if room.seat_index(seat_key).is_some() {
-            room.reclaim_seat(seat_key, player_id, name).map(|old_id| {
+        let mut next = room.clone();
+        let applied = if next.seat_index(seat_key).is_some() {
+            next.reclaim_seat(seat_key, player_id, name).map(|old_id| {
                 if let Ok(mut map) = channels.player_rooms.lock() {
                     map.remove(&old_id);
                 }
             })
-        } else if room.phase == GamePhase::Lobby {
-            if room.players.len() >= 8 {
+        } else if next.phase == GamePhase::Lobby {
+            if next.players.len() >= 8 {
                 Err("Game is full".into())
             } else {
-                room.players.push(Player {
+                next.players.push(Player {
                     id: player_id,
                     seat_key,
                     name,
@@ -329,16 +409,20 @@ fn join_or_reclaim(
                     connected: true,
                     forfeited: false,
                 });
-                room.status_message = format!(
+                next.status_message = format!(
                     "{} joined — {} player(s).",
-                    room.players.last().unwrap().name,
-                    room.players.len()
+                    next.players.last().unwrap().name,
+                    next.players.len()
                 );
                 Ok(())
             }
         } else {
             Err("Game already in progress".into())
+        };
+        if applied.is_ok() {
+            *room = next;
         }
+        applied
     };
 
     if let Err(message) = result {
@@ -346,6 +430,7 @@ fn join_or_reclaim(
         return;
     }
 
+    vacate_seat(world, channels, seat_key, Some(code));
     if let Some(store) = &channels.store {
         if let Err(err) = store.set_seat(seat_key, code) {
             tracing::warn!("redis seat: {err}");
@@ -424,7 +509,14 @@ fn with_room_mut(
 
     let result = {
         let mut room = world.get_mut::<Room>(entity).unwrap();
-        f(&mut room)
+        let mut next = room.clone();
+        match f(&mut next) {
+            Ok(()) => {
+                *room = next;
+                Ok(())
+            }
+            Err(message) => Err(message),
+        }
     };
 
     if let Err(message) = result {
@@ -484,7 +576,10 @@ fn upsert_room(world: &mut World, room: Room) -> Entity {
         entity
     } else {
         let entity = world.spawn(room).id();
-        world.resource_mut::<GameRooms>().by_code.insert(code, entity);
+        world
+            .resource_mut::<GameRooms>()
+            .by_code
+            .insert(code, entity);
         entity
     }
 }
@@ -495,11 +590,7 @@ fn delete_local_room(world: &mut World, code: &str) {
     }
 }
 
-fn load_store_room(
-    world: &mut World,
-    store: &Store,
-    code: &str,
-) -> Result<Option<Entity>, String> {
+fn load_store_room(world: &mut World, store: &Store, code: &str) -> Result<Option<Entity>, String> {
     match store.get(code)? {
         Some(room) => Ok(Some(upsert_room(world, room))),
         None => {
@@ -637,12 +728,175 @@ pub fn mark_disconnected(world: &mut World, channels: &NetChannels, player_id: U
     let Some(entity) = entity else {
         return;
     };
-    if let Some(mut room) = world.get_mut::<Room>(entity) {
+    let changed = if let Some(mut room) = world.get_mut::<Room>(entity) {
         if let Some(idx) = room.player_index(player_id) {
-            room.players[idx].connected = false;
-            room.status_message = format!("{} disconnected", room.players[idx].name);
+            if room.players[idx].connected {
+                room.players[idx].connected = false;
+                room.status_message = format!("{} disconnected", room.players[idx].name);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
         }
+    } else {
+        false
+    };
+    if !changed {
+        return;
     }
     persist_existing(world, channels, &code);
     broadcast_room(world, channels, &code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::new_channels;
+    use tokio::sync::mpsc;
+
+    fn bind(channels: &NetChannels, id: Uuid) -> mpsc::UnboundedReceiver<ServerMessage> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        channels.outbound.lock().unwrap().insert(id, tx);
+        rx
+    }
+
+    fn take(rx: &mut mpsc::UnboundedReceiver<ServerMessage>) -> Vec<ServerMessage> {
+        let mut out = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            out.push(msg);
+        }
+        out
+    }
+
+    fn setup() -> (App, NetChannels) {
+        let channels = new_channels(None);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(channels.clone())
+            .add_plugins(BonesGamePlugin);
+        (app, channels)
+    }
+
+    fn push(channels: &NetChannels, player_id: Uuid, msg: ClientMessage) {
+        channels
+            .commands
+            .lock()
+            .unwrap()
+            .push(NetCommand { player_id, msg });
+    }
+
+    #[test]
+    fn illegal_select_sends_error_without_state() {
+        let (mut app, channels) = setup();
+        let host = Uuid::new_v4();
+        let mut rx = bind(&channels, host);
+        push(
+            &channels,
+            host,
+            ClientMessage::CreateGame {
+                name: "Host".into(),
+                seat_key: Uuid::new_v4(),
+            },
+        );
+        app.update();
+        let created = take(&mut rx);
+        assert!(
+            created
+                .iter()
+                .any(|m| matches!(m, ServerMessage::GameCreated { .. }))
+        );
+        assert!(created.iter().any(|m| matches!(m, ServerMessage::State(_))));
+
+        push(&channels, host, ClientMessage::Select { indices: vec![0] });
+        app.update();
+        let after = take(&mut rx);
+        assert!(
+            after
+                .iter()
+                .any(|m| matches!(m, ServerMessage::Error { .. }))
+        );
+        assert!(
+            !after.iter().any(|m| matches!(m, ServerMessage::State(_))),
+            "illegal select must not fan out State"
+        );
+    }
+
+    #[test]
+    fn failed_join_does_not_vacate_current_table() {
+        let (mut app, channels) = setup();
+        let host = Uuid::new_v4();
+        let guest = Uuid::new_v4();
+        let guest_seat = Uuid::new_v4();
+        let mut host_rx = bind(&channels, host);
+        let mut guest_rx = bind(&channels, guest);
+
+        push(
+            &channels,
+            host,
+            ClientMessage::CreateGame {
+                name: "Host".into(),
+                seat_key: Uuid::new_v4(),
+            },
+        );
+        app.update();
+        let host_code = take(&mut host_rx)
+            .into_iter()
+            .find_map(|m| match m {
+                ServerMessage::GameCreated { code, .. } => Some(code),
+                _ => None,
+            })
+            .expect("created");
+
+        push(
+            &channels,
+            guest,
+            ClientMessage::JoinGame {
+                code: host_code.clone(),
+                name: "Guest".into(),
+                seat_key: guest_seat,
+            },
+        );
+        app.update();
+        let _ = take(&mut host_rx);
+        let _ = take(&mut guest_rx);
+
+        push(
+            &channels,
+            guest,
+            ClientMessage::JoinGame {
+                code: "ZZZZZ".into(),
+                name: "Guest".into(),
+                seat_key: guest_seat,
+            },
+        );
+        app.update();
+        let guest_msgs = take(&mut guest_rx);
+        assert!(
+            guest_msgs
+                .iter()
+                .any(|m| matches!(m, ServerMessage::Error { .. }))
+        );
+        assert!(
+            !guest_msgs
+                .iter()
+                .any(|m| matches!(m, ServerMessage::State(_)))
+        );
+        assert!(
+            !take(&mut host_rx)
+                .iter()
+                .any(|m| matches!(m, ServerMessage::State(_))),
+            "failed join must not broadcast a leave from the old table"
+        );
+
+        let world = app.world();
+        let entity = *world
+            .resource::<GameRooms>()
+            .by_code
+            .get(&host_code)
+            .expect("room");
+        let room = world.get::<Room>(entity).expect("room component");
+        assert_eq!(room.players.len(), 2);
+    }
 }

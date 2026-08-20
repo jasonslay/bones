@@ -5,9 +5,9 @@ COPY rust-toolchain.toml ./
 RUN rustup show
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-COPY web ./web
 RUN cargo build --release \
     && cargo rustc --release --bin bones -- -C target-feature=+crt-static
+COPY web ./web
 
 FROM scratch
 

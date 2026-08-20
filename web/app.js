@@ -342,38 +342,59 @@ function renderGame() {
   $("screen-game")?.classList.toggle("in-play", !showInvite);
   $("status").textContent = g.message || "";
   renderTurnBanner(g);
+  renderScoreboard(g);
+  updateTurnScore(g);
+  renderDice(g);
+  renderActions(g);
+  renderSettings(g);
+}
 
-  const actor = actingPlayer(g);
+function renderScoreboard(g) {
   const board = $("scoreboard");
-  board.innerHTML = "";
-  for (const p of g.players) {
-    const chip = document.createElement("div");
-    chip.className = "player-chip";
+  const actor = actingPlayer(g);
+  const players = g.players || [];
+  const seen = new Set();
+  players.forEach((p, i) => {
+    seen.add(p.id);
+    let chip = board.querySelector(`[data-player-id="${p.id}"]`);
+    if (!chip) {
+      chip = document.createElement("div");
+      chip.dataset.playerId = p.id;
+      chip.innerHTML = `
+        <span class="pinfo">
+          <span class="pname"></span>
+          <span class="pscore"></span>
+        </span>
+        <span class="badges"></span>
+      `;
+    }
+    if (board.children[i] !== chip) {
+      board.insertBefore(chip, board.children[i] || null);
+    }
     const isActing = !!(actor && p.id === actor.id && !p.forfeited);
+    chip.className = "player-chip";
     if (isActing) chip.classList.add("active");
     if (p.on_board && !p.forfeited) chip.classList.add("on-board");
     if (!p.on_board) chip.classList.add("off-board");
     if (p.forfeited) chip.classList.add("forfeited");
     const you = p.id === g.you_are ? " (you)" : "";
+    const nameEl = chip.querySelector(".pname");
+    const scoreEl = chip.querySelector(".pscore");
+    const nameText = `${p.name}${you}`;
+    if (nameEl.textContent !== nameText) nameEl.textContent = nameText;
+    const scoreText = String(p.score);
+    if (scoreEl.textContent !== scoreText) scoreEl.textContent = scoreText;
     const badges = [
       p.forfeited ? '<span class="badge forfeit">forfeited</span>' : "",
       p.connected ? "" : '<span class="badge">away</span>',
       g.winner_id === p.id ? '<span class="badge winner">winner</span>' : "",
     ].join("");
-    chip.innerHTML = `
-      <span class="pinfo">
-        <span class="pname">${escapeHtml(p.name)}${you}</span>
-        <span class="pscore">${p.score}</span>
-      </span>
-      <span class="badges">${badges}</span>
-    `;
-    board.appendChild(chip);
-  }
-
-  updateTurnScore(g);
-  renderDice(g);
-  renderActions(g);
-  renderSettings(g);
+    const badgesEl = chip.querySelector(".badges");
+    if (badgesEl.innerHTML !== badges) badgesEl.innerHTML = badges;
+  });
+  [...board.children].forEach((el) => {
+    if (!seen.has(el.dataset.playerId)) el.remove();
+  });
 }
 
 function scoreHeld(faces) {
@@ -513,83 +534,109 @@ function renderDice(g) {
 
 function renderActions(g) {
   const root = $("actions");
-  root.innerHTML = "";
-
-    const add = (label, type, opts = {}) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "btn " + (opts.className || "primary");
-    b.textContent = label;
-    b.disabled = !!opts.disabled;
-    b.addEventListener("click", () => {
-      const indices = [...state.selected].sort((a, b) => a - b);
-      if (type === "roll" || type === "bank") {
-        send({ type, indices });
-      } else if (type === "keep") {
-        send({ type: "keep", indices });
-      } else {
-        send({ type });
+  const specs = actionSpecs(g);
+  const existing = new Map([...root.children].map((el) => [el.dataset.key, el]));
+  const used = new Set();
+  specs.forEach((spec, i) => {
+    used.add(spec.key);
+    let el = existing.get(spec.key);
+    if (!el) {
+      el = spec.kind === "note" ? document.createElement("p") : document.createElement("button");
+      el.dataset.key = spec.key;
+      if (spec.kind === "button") {
+        el.type = "button";
+        el.addEventListener("click", onActionClick);
       }
+    }
+    if (spec.kind === "note") {
+      if (el.textContent !== spec.text) el.textContent = spec.text;
+    } else {
+      el.dataset.type = spec.type;
+      el.className = "btn " + spec.className;
+      if (el.textContent !== spec.label) el.textContent = spec.label;
+      el.disabled = spec.disabled;
+    }
+    if (root.children[i] !== el) {
+      root.insertBefore(el, root.children[i] || null);
+    }
+  });
+  for (const [key, el] of existing) {
+    if (!used.has(key)) el.remove();
+  }
+}
+
+function actionSpecs(g) {
+  const specs = [];
+  const btn = (key, label, type, opts = {}) => {
+    specs.push({
+      key,
+      kind: "button",
+      label,
+      type,
+      className: opts.className || "primary",
+      disabled: !!opts.disabled,
     });
-    root.appendChild(b);
+  };
+  const note = (key, text) => {
+    specs.push({ key, kind: "note", text });
   };
 
   if (g.phase === "lobby") {
     if (g.you_are === g.host_id) {
-      add("Start game", "start_game", { disabled: g.players.length < 2 });
+      btn("start", "Start game", "start_game", { disabled: g.players.length < 2 });
     } else {
-      const wait = document.createElement("p");
-      wait.textContent = "Waiting for host to start…";
-      root.appendChild(wait);
+      note("wait-host", "Waiting for host to start…");
     }
-    return;
+    return specs;
   }
 
   if (g.phase === "finished") {
-    if (g.you_are === g.host_id) add("Rematch", "rematch");
-    const leave = document.createElement("button");
-    leave.type = "button";
-    leave.className = "btn ghost";
-    leave.textContent = "Leave table";
-    leave.addEventListener("click", leaveTable);
-    root.appendChild(leave);
-    return;
+    if (g.you_are === g.host_id) btn("rematch", "Rematch", "rematch");
+    btn("leave", "Leave table", "leave_table", { className: "ghost" });
+    return specs;
   }
 
   const me = g.players.find((p) => p.id === g.you_are);
   if (me?.forfeited) {
-    const wait = document.createElement("p");
-    wait.textContent = "You forfeited — watching.";
-    root.appendChild(wait);
-    const leave = document.createElement("button");
-    leave.type = "button";
-    leave.className = "btn ghost";
-    leave.textContent = "Leave table";
-    leave.addEventListener("click", leaveTable);
-    root.appendChild(leave);
-    return;
+    note("forfeit", "You forfeited — watching.");
+    btn("leave", "Leave table", "leave_table", { className: "ghost" });
+    return specs;
   }
 
   if (g.phase === "steal_window") {
     if (g.steal_available) {
-      add("Steal!", "steal");
-      add("Let them keep it", "decline_steal", { className: "ghost" });
+      btn("steal", "Steal!", "steal");
+      btn("decline", "Let them keep it", "decline_steal", { className: "ghost" });
     } else {
-      const wait = document.createElement("p");
-      wait.textContent = "Waiting on the next player…";
-      root.appendChild(wait);
+      note("wait-steal", "Waiting on the next player…");
     }
   } else if (!g.you_can_act) {
-    const wait = document.createElement("p");
-    wait.textContent = "Waiting for your turn…";
-    root.appendChild(wait);
+    note("wait-turn", "Waiting for your turn…");
   } else if (g.awaiting_keep) {
     const held = scoreHeld(heldFaces(g));
     const canScore = held.points > 0 || held.autoWin;
-    add("Roll", "roll", { disabled: !canScore });
-    add("Bank", "bank", { className: "ghost", disabled: !canScore });
+    btn("roll", "Roll", "roll", { disabled: !canScore });
+    btn("bank", "Bank", "bank", { className: "ghost", disabled: !canScore });
   } else {
-    add("Roll", "roll");
+    btn("roll", "Roll", "roll");
+  }
+  return specs;
+}
+
+function onActionClick(ev) {
+  const type = ev.currentTarget.dataset.type;
+  if (!type || ev.currentTarget.disabled) return;
+  if (type === "leave_table") {
+    leaveTable();
+    return;
+  }
+  const indices = [...state.selected].sort((a, b) => a - b);
+  if (type === "roll" || type === "bank") {
+    send({ type, indices });
+  } else if (type === "keep") {
+    send({ type: "keep", indices });
+  } else {
+    send({ type });
   }
 }
 
@@ -670,14 +717,6 @@ function renderTimer() {
   } else {
     el.textContent = `${m}:${s}`;
   }
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }
 
 async function boot() {
