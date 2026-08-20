@@ -9,7 +9,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 use uuid::Uuid;
 
-const ROOM_TTL_SECS: u64 = 86_400;
+/// Room and seat keys expire this long after the last Redis write.
+const ROOM_TTL_SECS: u64 = 3_600;
 const CHANNEL: &str = "bones:rooms";
 
 const SAVE_LUA: &str = r#"
@@ -24,6 +25,11 @@ else
   redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[3]))
 end
 redis.call('PUBLISH', KEYS[2], ARGV[4])
+local ttl = tonumber(ARGV[3])
+local code = cjson.decode(ARGV[1]).code
+for i = 3, #KEYS do
+  redis.call('SET', KEYS[i], code, 'EX', ttl)
+end
 return 1
 "#;
 
@@ -181,9 +187,13 @@ impl Store {
             Some(v) => v.to_string(),
         };
         let mut conn = self.conn.clone();
-        let saved: i32 = redis::Script::new(SAVE_LUA)
-            .key(Self::room_key(&room.code))
-            .key(CHANNEL)
+        let mut script = redis::Script::new(SAVE_LUA);
+        script.key(Self::room_key(&room.code));
+        script.key(CHANNEL);
+        for player in &room.players {
+            script.key(Self::seat_key(player.seat_key));
+        }
+        let saved: i32 = script
             .arg(json)
             .arg(expected)
             .arg(ROOM_TTL_SECS)

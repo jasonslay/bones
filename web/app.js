@@ -139,32 +139,71 @@ function wsUrl() {
   return `${proto}://${location.host}/ws`;
 }
 
+let connecting = null;
+
 function connect() {
-  return new Promise((resolve, reject) => {
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      resolve(state.ws);
-      return;
-    }
+  if (state.ws?.readyState === WebSocket.OPEN && state.playerId) {
+    return Promise.resolve(state.ws);
+  }
+  if (connecting) return connecting;
+  connecting = new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl());
     state.ws = ws;
+    state.playerId = null;
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      fail(new Error("Server did not welcome the connection"));
+      try {
+        ws.close();
+      } catch {
+        /* already closed */
+      }
+    }, 8_000);
+
+    function succeed(value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }
+
+    function fail(err) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    }
+
     ws.addEventListener("open", () => {
       startHeartbeat(ws);
-      resolve(ws);
     });
-    ws.addEventListener("error", () => reject(new Error("Could not connect")));
+    ws.addEventListener("error", () => fail(new Error("Could not connect")));
     ws.addEventListener("message", (ev) => {
+      let msg;
       try {
-        onServer(JSON.parse(ev.data));
+        msg = JSON.parse(ev.data);
       } catch (e) {
         console.error(e);
+        return;
       }
+      onServer(msg);
+      if (msg.type === "welcome") succeed(ws);
     });
     ws.addEventListener("close", () => {
       if (state.ws !== ws) return;
+      if (!settled) {
+        fail(new Error("Disconnected"));
+        return;
+      }
+      if (!state.playerId) return;
       if (state.game?.code) scheduleReconnect();
       else toast("Disconnected — refresh to rejoin");
     });
+  }).finally(() => {
+    connecting = null;
   });
+  return connecting;
 }
 
 const PING_STALE_MS = 45_000;
@@ -185,19 +224,22 @@ function startHeartbeat(ws) {
 
 function scheduleReconnect() {
   if (state.reconnecting) return;
+  if (!(state.game?.code || pathCode())) return;
   state.reconnecting = true;
   toast("Connection lost — reclaiming your seat…");
   const attempt = async (n) => {
     try {
       await connect();
-      await new Promise((r) => setTimeout(r, 80));
+      if (!state.reconnecting) return;
       const code = state.game?.code || pathCode();
-      const name = state.playerName || "Player";
-      if (code) {
-        send({ type: "join_game", code, name, seat_key: seatKey() });
+      if (!code) {
+        goHome("That table is gone");
+        return;
       }
+      send({ type: "join_game", code, name: state.playerName || "Player", seat_key: seatKey() });
       state.reconnecting = false;
     } catch {
+      if (!state.reconnecting) return;
       setTimeout(() => attempt(n + 1), Math.min(1000 * 2 ** n, 15000));
     }
   };
@@ -220,6 +262,11 @@ function onServer(msg) {
       send({ type: "pong" });
       break;
     case "error":
+      if (msg.message === "Game not found") {
+        const wasAtTable = Boolean(state.game?.code || state.reconnecting);
+        goHome(wasAtTable ? "That table is gone" : msg.message);
+        break;
+      }
       showHomeError(msg.message);
       toast(msg.message);
       break;
@@ -253,9 +300,14 @@ function onServer(msg) {
 
 function leaveTable() {
   send({ type: "leave_game" });
+  goHome("");
+}
+
+function goHome(message) {
   state.game = null;
   state.boundCode = null;
   state.selected = new Set();
+  state.reconnecting = false;
   localStorage.removeItem("bones-room");
   history.replaceState(null, "", "/");
   const wrap = $("join-code-wrap");
@@ -263,6 +315,10 @@ function leaveTable() {
   const codeInput = $("join-code");
   if (codeInput) codeInput.value = "";
   showScreen("home");
+  if (message) {
+    showHomeError(message);
+    toast(message);
+  }
 }
 
 function showHomeError(text) {
@@ -644,10 +700,7 @@ async function boot() {
 
     const intent = e.submitter?.value || "create";
     try {
-      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-        await connect();
-        await new Promise((r) => setTimeout(r, 80));
-      }
+      await connect();
       if (intent === "create") {
         send({ type: "leave_game" });
         state.game = null;
