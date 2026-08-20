@@ -52,6 +52,12 @@ impl Store {
         })
     }
 
+    pub async fn ping_async(&self) -> redis::RedisResult<()> {
+        let mut conn = self.conn.clone();
+        let _: String = redis::cmd("PING").query_async(&mut conn).await?;
+        Ok(())
+    }
+
     pub fn get(&self, code: &str) -> Result<Option<Room>, String> {
         self.handle
             .block_on(self.get_async(code))

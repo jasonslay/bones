@@ -3,13 +3,14 @@ use crate::protocol::{ClientMessage, ServerMessage, WS_PING_INTERVAL_MS};
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, HeaderValue, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch};
@@ -36,6 +37,7 @@ pub fn new_channels(store: Option<crate::store::Store>) -> NetChannels {
         remote_events: Arc::new(Mutex::new(Vec::new())),
         shutdown,
         store,
+        bevy_tick_ms: Arc::new(AtomicU64::new(0)),
     }
 }
 
@@ -46,7 +48,8 @@ pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
     };
 
     let app = Router::new()
-        .route("/healthz", get(|| async { "ok" }))
+        .route("/healthz", get(liveness))
+        .route("/readyz", get(readiness))
         .route("/ws", get(ws_handler))
         .route("/", get(index_page))
         .route("/g/{code}", get(index_page))
@@ -94,6 +97,47 @@ async fn wait_for_signal() {
     {
         ctrl_c.await.expect("ctrl_c");
     }
+}
+
+const READY_BEVY_STALE_MS: u64 = 1_000;
+const LIVE_BEVY_STALE_MS: u64 = 10_000;
+
+fn bevy_age_ms(channels: &NetChannels) -> Option<u64> {
+    let tick = channels.bevy_tick_ms.load(Ordering::Relaxed);
+    if tick == 0 {
+        return None;
+    }
+    Some(crate::game::now_ms().saturating_sub(tick))
+}
+
+fn bevy_fresh(channels: &NetChannels, max_age_ms: u64) -> bool {
+    bevy_age_ms(channels).is_some_and(|age| age <= max_age_ms)
+}
+
+async fn liveness(State(state): State<AppState>) -> impl IntoResponse {
+    if *state.channels.shutdown.borrow() {
+        return (StatusCode::OK, "ok");
+    }
+    if bevy_fresh(&state.channels, LIVE_BEVY_STALE_MS) {
+        (StatusCode::OK, "ok")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "bevy")
+    }
+}
+
+async fn readiness(State(state): State<AppState>) -> impl IntoResponse {
+    if *state.channels.shutdown.borrow() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "shutdown");
+    }
+    if !bevy_fresh(&state.channels, READY_BEVY_STALE_MS) {
+        return (StatusCode::SERVICE_UNAVAILABLE, "bevy");
+    }
+    if let Some(store) = &state.channels.store {
+        if store.ping_async().await.is_err() {
+            return (StatusCode::SERVICE_UNAVAILABLE, "redis");
+        }
+    }
+    (StatusCode::OK, "ok")
 }
 
 fn asset_ver(web_dir: &Path) -> String {

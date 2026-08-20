@@ -4,6 +4,7 @@ use crate::store::{Store, StoreEvent};
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
@@ -19,6 +20,7 @@ pub struct NetChannels {
     pub remote_events: Arc<Mutex<Vec<StoreEvent>>>,
     pub shutdown: watch::Sender<bool>,
     pub store: Option<Store>,
+    pub bevy_tick_ms: Arc<AtomicU64>,
 }
 
 pub struct NetCommand {
@@ -33,6 +35,7 @@ impl Plugin for BonesGamePlugin {
         app.init_resource::<GameRooms>().add_systems(
             Update,
             (
+                touch_heartbeat,
                 process_net_commands,
                 check_forfeit_timeouts,
                 exit_on_shutdown,
@@ -602,6 +605,12 @@ fn check_forfeit_timeouts(world: &mut World) {
     for code in dirty {
         broadcast_room(world, &channels, &code);
     }
+}
+
+fn touch_heartbeat(channels: Res<NetChannels>) {
+    channels
+        .bevy_tick_ms
+        .store(crate::game::now_ms(), Ordering::Relaxed);
 }
 
 fn exit_on_shutdown(channels: Res<NetChannels>, mut exit: MessageWriter<AppExit>) {
