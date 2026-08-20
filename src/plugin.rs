@@ -1,9 +1,10 @@
 use crate::game::{GameRooms, Player, Room, generate_code};
 use crate::protocol::{ClientMessage, GamePhase, ServerMessage, invite_path};
+use crate::store::{Store, StoreEvent};
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 pub type OutboundMap = Arc<Mutex<HashMap<Uuid, mpsc::UnboundedSender<ServerMessage>>>>;
@@ -15,6 +16,9 @@ pub struct NetChannels {
     pub outbound: OutboundMap,
     pub player_rooms: PlayerRooms,
     pub disconnects: Arc<Mutex<Vec<Uuid>>>,
+    pub remote_events: Arc<Mutex<Vec<StoreEvent>>>,
+    pub shutdown: watch::Sender<bool>,
+    pub store: Option<Store>,
 }
 
 pub struct NetCommand {
@@ -28,13 +32,20 @@ impl Plugin for BonesGamePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GameRooms>().add_systems(
             Update,
-            (process_net_commands, check_forfeit_timeouts).chain(),
+            (
+                process_net_commands,
+                check_forfeit_timeouts,
+                exit_on_shutdown,
+            )
+                .chain(),
         );
     }
 }
 
 fn process_net_commands(world: &mut World) {
     let channels = world.resource::<NetChannels>().clone();
+    apply_remote_events(world, &channels);
+
     let mut batch = Vec::new();
     if let Ok(mut guard) = channels.commands.lock() {
         batch.append(&mut *guard);
@@ -58,7 +69,6 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
         ClientMessage::CreateGame { name, seat_key } => {
             let name = sanitize_name(&name);
             vacate_seat(world, channels, seat_key, None);
-            let code = unique_code(world);
             let player = Player {
                 id: player_id,
                 seat_key,
@@ -68,13 +78,16 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
                 connected: true,
                 forfeited: false,
             };
-            let room = Room::new(code.clone(), player);
-            let entity = world.spawn(room).id();
-            world
-                .resource_mut::<GameRooms>()
-                .by_code
-                .insert(code.clone(), entity);
-
+            let Some(code) = insert_new_room(world, channels, player) else {
+                send(
+                    channels,
+                    player_id,
+                    ServerMessage::Error {
+                        message: "Could not create a room".into(),
+                    },
+                );
+                return;
+            };
             track_membership(channels, player_id, &code);
             send(
                 channels,
@@ -148,6 +161,7 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
         ClientMessage::LeaveGame => {
             leave_player(world, channels, player_id);
         }
+        ClientMessage::Pong => {}
     }
 }
 
@@ -181,6 +195,14 @@ fn vacate_seat(
     seat_key: Uuid,
     keep_code: Option<&str>,
 ) {
+    if let Some(store) = &channels.store {
+        if let Ok(Some(code)) = store.get_seat(seat_key) {
+            if keep_code != Some(code.as_str()) {
+                let _ = load_store_room(world, store, &code);
+            }
+        }
+    }
+
     let targets: Vec<(String, Entity)> = world
         .resource::<GameRooms>()
         .by_code
@@ -209,6 +231,9 @@ fn vacate_seat(
                 map.remove(&old_id);
             }
         }
+        if let Some(store) = &channels.store {
+            let _ = store.del_seat(seat_key);
+        }
     }
 
     if !empty.is_empty() {
@@ -217,10 +242,16 @@ fn vacate_seat(
             rooms.by_code.remove(code);
         }
     }
-    for (_, entity) in empty {
-        world.despawn(entity);
+    for (code, entity) in &empty {
+        if let Some(store) = &channels.store {
+            if let Err(err) = store.delete(code) {
+                tracing::warn!("redis delete {code}: {err}");
+            }
+        }
+        world.despawn(*entity);
     }
     for code in dirty {
+        persist_existing(world, channels, &code);
         broadcast_room(world, channels, &code);
     }
 }
@@ -239,6 +270,26 @@ fn join_or_reclaim(
     name: String,
     seat_key: Uuid,
 ) {
+    if let Some(store) = &channels.store {
+        match load_store_room(world, store, code) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                send(
+                    channels,
+                    player_id,
+                    ServerMessage::Error {
+                        message: "Game not found".into(),
+                    },
+                );
+                return;
+            }
+            Err(err) => {
+                send(channels, player_id, ServerMessage::Error { message: err });
+                return;
+            }
+        }
+    }
+
     let entity = {
         let rooms = world.resource::<GameRooms>();
         rooms.by_code.get(code).copied()
@@ -292,6 +343,12 @@ fn join_or_reclaim(
         return;
     }
 
+    if let Some(store) = &channels.store {
+        if let Err(err) = store.set_seat(seat_key, code) {
+            tracing::warn!("redis seat: {err}");
+        }
+    }
+    persist_existing(world, channels, code);
     track_membership(channels, player_id, code);
     send(
         channels,
@@ -328,6 +385,25 @@ fn with_room_mut(
         );
         return;
     };
+    if let Some(store) = &channels.store {
+        match load_store_room(world, store, &code) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                send(
+                    channels,
+                    player_id,
+                    ServerMessage::Error {
+                        message: "Game not found".into(),
+                    },
+                );
+                return;
+            }
+            Err(err) => {
+                send(channels, player_id, ServerMessage::Error { message: err });
+                return;
+            }
+        }
+    }
     let entity = {
         let rooms = world.resource::<GameRooms>();
         rooms.by_code.get(&code).copied()
@@ -350,18 +426,10 @@ fn with_room_mut(
 
     if let Err(message) = result {
         send(channels, player_id, ServerMessage::Error { message });
+        return;
     }
+    persist_existing(world, channels, &code);
     broadcast_room(world, channels, &code);
-}
-
-fn unique_code(world: &World) -> String {
-    let rooms = world.resource::<GameRooms>();
-    loop {
-        let code = generate_code();
-        if !rooms.by_code.contains_key(&code) {
-            return code;
-        }
-    }
 }
 
 fn sanitize_name(name: &str) -> String {
@@ -371,6 +439,117 @@ fn sanitize_name(name: &str) -> String {
         "Player".into()
     } else {
         trimmed.to_string()
+    }
+}
+
+fn insert_new_room(world: &mut World, channels: &NetChannels, player: Player) -> Option<String> {
+    let seat_key = player.seat_key;
+    for _ in 0..16 {
+        let code = generate_code();
+        if world.resource::<GameRooms>().by_code.contains_key(&code) {
+            continue;
+        }
+        let room = Room::new(code.clone(), player.clone());
+        if let Some(store) = &channels.store {
+            match store.create(&room) {
+                Ok(true) => {
+                    let _ = store.set_seat(seat_key, &code);
+                }
+                Ok(false) => continue,
+                Err(err) => {
+                    tracing::warn!("redis create: {err}");
+                    return None;
+                }
+            }
+        }
+        let entity = world.spawn(room).id();
+        world
+            .resource_mut::<GameRooms>()
+            .by_code
+            .insert(code.clone(), entity);
+        return Some(code);
+    }
+    None
+}
+
+fn upsert_room(world: &mut World, room: Room) -> Entity {
+    let code = room.code.clone();
+    if let Some(entity) = world.resource::<GameRooms>().by_code.get(&code).copied() {
+        if let Some(mut existing) = world.get_mut::<Room>(entity) {
+            *existing = room;
+        }
+        entity
+    } else {
+        let entity = world.spawn(room).id();
+        world.resource_mut::<GameRooms>().by_code.insert(code, entity);
+        entity
+    }
+}
+
+fn delete_local_room(world: &mut World, code: &str) {
+    if let Some(entity) = world.resource_mut::<GameRooms>().by_code.remove(code) {
+        world.despawn(entity);
+    }
+}
+
+fn load_store_room(
+    world: &mut World,
+    store: &Store,
+    code: &str,
+) -> Result<Option<Entity>, String> {
+    match store.get(code)? {
+        Some(room) => Ok(Some(upsert_room(world, room))),
+        None => {
+            delete_local_room(world, code);
+            Ok(None)
+        }
+    }
+}
+
+fn persist_existing(world: &mut World, channels: &NetChannels, code: &str) {
+    let Some(store) = &channels.store else {
+        return;
+    };
+    let Some(entity) = world.resource::<GameRooms>().by_code.get(code).copied() else {
+        return;
+    };
+    let Some(mut room) = world.get_mut::<Room>(entity) else {
+        return;
+    };
+    match store.update(&mut room) {
+        Ok(true) => {}
+        Ok(false) => {
+            drop(room);
+            tracing::debug!("redis conflict on {code}; reloading");
+            let _ = load_store_room(world, store, code);
+        }
+        Err(err) => tracing::warn!("redis update {code}: {err}"),
+    }
+}
+
+fn apply_remote_events(world: &mut World, channels: &NetChannels) {
+    let mut events = Vec::new();
+    if let Ok(mut q) = channels.remote_events.lock() {
+        events.append(&mut *q);
+    }
+    for event in events {
+        match event {
+            StoreEvent::Upsert { room } => {
+                let code = room.code.clone();
+                let incoming = room.version;
+                let skip = world
+                    .resource::<GameRooms>()
+                    .by_code
+                    .get(&code)
+                    .and_then(|e| world.get::<Room>(*e))
+                    .is_some_and(|local| local.version >= incoming);
+                upsert_room(world, room);
+                if !skip {
+                    broadcast_room(world, channels, &code);
+                }
+            }
+            StoreEvent::Delete { code } => delete_local_room(world, &code),
+        }
     }
 }
 
@@ -415,11 +594,19 @@ fn check_forfeit_timeouts(world: &mut World) {
             continue;
         };
         if room.check_timeout(now) {
+            drop(room);
+            persist_existing(world, &channels, &code);
             dirty.push(code);
         }
     }
     for code in dirty {
         broadcast_room(world, &channels, &code);
+    }
+}
+
+fn exit_on_shutdown(channels: Res<NetChannels>, mut exit: MessageWriter<AppExit>) {
+    if *channels.shutdown.borrow() {
+        exit.write(AppExit::Success);
     }
 }
 
@@ -447,5 +634,6 @@ pub fn mark_disconnected(world: &mut World, channels: &NetChannels, player_id: U
             room.status_message = format!("{} disconnected", room.players[idx].name);
         }
     }
+    persist_existing(world, channels, &code);
     broadcast_room(world, channels, &code);
 }

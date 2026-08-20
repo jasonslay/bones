@@ -147,7 +147,10 @@ function connect() {
     }
     const ws = new WebSocket(wsUrl());
     state.ws = ws;
-    ws.addEventListener("open", () => resolve(ws));
+    ws.addEventListener("open", () => {
+      startHeartbeat(ws);
+      resolve(ws);
+    });
     ws.addEventListener("error", () => reject(new Error("Could not connect")));
     ws.addEventListener("message", (ev) => {
       try {
@@ -162,6 +165,22 @@ function connect() {
       else toast("Disconnected — refresh to rejoin");
     });
   });
+}
+
+const PING_STALE_MS = 45_000;
+
+function startHeartbeat(ws) {
+  state.lastServerAt = Date.now();
+  const timer = setInterval(() => {
+    if (state.ws !== ws || ws.readyState !== WebSocket.OPEN) {
+      clearInterval(timer);
+      return;
+    }
+    if (Date.now() - state.lastServerAt > PING_STALE_MS) {
+      clearInterval(timer);
+      ws.close();
+    }
+  }, 5_000);
 }
 
 function scheduleReconnect() {
@@ -192,9 +211,13 @@ function send(msg) {
 }
 
 function onServer(msg) {
+  state.lastServerAt = Date.now();
   switch (msg.type) {
     case "welcome":
       state.playerId = msg.player_id;
+      break;
+    case "ping":
+      send({ type: "pong" });
       break;
     case "error":
       showHomeError(msg.message);

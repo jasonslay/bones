@@ -5,6 +5,8 @@ pub const WIN_SCORE: u32 = 10_000;
 pub const BOARD_THRESHOLD: u32 = 1_000;
 pub const DICE_COUNT: usize = 5;
 pub const ACTION_TIMEOUT_MS: u64 = 60_000;
+/// Keepalive interval. Stays well under typical proxy idle timeouts (~100s).
+pub const WS_PING_INTERVAL_MS: u64 = 20_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -41,6 +43,7 @@ pub enum ClientMessage {
     Forfeit,
     Rematch,
     LeaveGame,
+    Pong,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +66,7 @@ pub enum ServerMessage {
         invite_path: String,
     },
     State(GameView),
+    Ping,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,4 +119,19 @@ pub enum GamePhase {
 
 pub fn invite_path(code: &str) -> String {
     format!("/g/{code}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ping_pong_wire_format() {
+        assert_eq!(
+            serde_json::to_string(&ServerMessage::Ping).unwrap(),
+            r#"{"type":"ping"}"#
+        );
+        let pong: ClientMessage = serde_json::from_str(r#"{"type":"pong"}"#).unwrap();
+        assert!(matches!(pong, ClientMessage::Pong));
+    }
 }

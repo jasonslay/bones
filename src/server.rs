@@ -1,5 +1,5 @@
 use crate::plugin::{NetChannels, NetCommand, OutboundMap, PlayerRooms};
-use crate::protocol::{ClientMessage, ServerMessage};
+use crate::protocol::{ClientMessage, ServerMessage, WS_PING_INTERVAL_MS};
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -11,10 +11,14 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, watch};
+use tokio::time::MissedTickBehavior;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
+
+/// Time to flush WebSocket close frames after SIGTERM before forcing exit.
+const SHUTDOWN_DRAIN: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -22,18 +26,22 @@ pub struct AppState {
     pub web_dir: PathBuf,
 }
 
-pub fn new_channels() -> NetChannels {
+pub fn new_channels(store: Option<crate::store::Store>) -> NetChannels {
+    let (shutdown, _) = watch::channel(false);
     NetChannels {
         commands: Arc::new(Mutex::new(Vec::new())),
         outbound: Arc::new(Mutex::new(HashMap::new())) as OutboundMap,
         player_rooms: Arc::new(Mutex::new(HashMap::new())) as PlayerRooms,
         disconnects: Arc::new(Mutex::new(Vec::new())),
+        remote_events: Arc::new(Mutex::new(Vec::new())),
+        shutdown,
+        store,
     }
 }
 
 pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
     let state = AppState {
-        channels,
+        channels: channels.clone(),
         web_dir: web_dir.clone(),
     };
 
@@ -45,9 +53,47 @@ pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
         .fallback_service(ServeDir::new(&web_dir))
         .with_state(state);
 
-    tracing::info!("Bones listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
-    axum::serve(listener, app).await.expect("serve");
+    tracing::info!("Bones listening on http://{addr}");
+
+    let mut shutting_down = channels.shutdown.subscribe();
+    let shutdown_tx = channels.shutdown.clone();
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        wait_for_signal().await;
+        tracing::info!("shutdown signal received");
+        let _ = shutdown_tx.send(true);
+    });
+
+    tokio::select! {
+        result = server => {
+            if let Err(err) = result {
+                tracing::error!("server error: {err}");
+            }
+        }
+        _ = async {
+            let _ = shutting_down.changed().await;
+            tokio::time::sleep(SHUTDOWN_DRAIN).await;
+        } => {
+            tracing::info!("shutdown drain complete");
+        }
+    }
+}
+
+async fn wait_for_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.expect("ctrl_c");
+    }
 }
 
 fn asset_ver(web_dir: &Path) -> String {
@@ -106,20 +152,55 @@ async fn client_session(socket: WebSocket, state: AppState) {
         .await;
 
     let outbound = state.channels.outbound.clone();
+    let mut shutdown_rx = state.channels.shutdown.subscribe();
+    let mut write_shutdown = shutdown_rx.clone();
     let write_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            let Ok(text) = serde_json::to_string(&msg) else {
-                continue;
-            };
-            if sink.send(Message::Text(text.into())).await.is_err() {
-                break;
+        let mut interval = tokio::time::interval(Duration::from_millis(WS_PING_INTERVAL_MS));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                _ = write_shutdown.changed() => {
+                    let _ = sink.send(Message::Close(None)).await;
+                    break;
+                }
+                msg = rx.recv() => {
+                    let Some(msg) = msg else {
+                        break;
+                    };
+                    let Ok(text) = serde_json::to_string(&msg) else {
+                        continue;
+                    };
+                    if sink.send(Message::Text(text.into())).await.is_err() {
+                        break;
+                    }
+                }
+                _ = interval.tick() => {
+                    if sink.send(Message::Ping(Default::default())).await.is_err() {
+                        break;
+                    }
+                    let Ok(text) = serde_json::to_string(&ServerMessage::Ping) else {
+                        continue;
+                    };
+                    if sink.send(Message::Text(text.into())).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
 
-    while let Some(Ok(msg)) = stream.next().await {
+    loop {
+        let msg = tokio::select! {
+            _ = shutdown_rx.changed() => break,
+            msg = stream.next() => msg,
+        };
+        let Some(Ok(msg)) = msg else {
+            break;
+        };
         match msg {
             Message::Text(text) => match serde_json::from_str::<ClientMessage>(&text) {
+                Ok(ClientMessage::Pong) => {}
                 Ok(client_msg) => {
                     let mut q = state.channels.commands.lock().expect("commands");
                     q.push(NetCommand {

@@ -5,6 +5,7 @@ use crate::protocol::{
 use crate::scoring::{can_keep_die, has_any_score, score_dice, score_held};
 use bevy::prelude::*;
 use rand::RngExt;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -14,7 +15,7 @@ pub struct GameRooms {
     pub by_code: HashMap<String, Entity>,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct Room {
     pub code: String,
     pub host_id: Uuid,
@@ -32,9 +33,11 @@ pub struct Room {
     pub winner_id: Option<Uuid>,
     pub status_message: String,
     pub action_deadline_ms: Option<u64>,
+    #[serde(default)]
+    pub version: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Player {
     pub id: Uuid,
     pub seat_key: Uuid,
@@ -45,7 +48,7 @@ pub struct Player {
     pub forfeited: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PendingBank {
     pub player_id: Uuid,
     pub points: u32,
@@ -96,6 +99,7 @@ impl Room {
             winner_id: None,
             status_message: "Waiting for players… share the invite link.".into(),
             action_deadline_ms: None,
+            version: 0,
         }
     }
 
