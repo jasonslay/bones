@@ -1,19 +1,16 @@
-FROM rust:bookworm AS builder
+FROM rust:alpine AS builder
 
 WORKDIR /app
+COPY rust-toolchain.toml ./
+RUN rustup show
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY web ./web
-RUN cargo build --release
+RUN cargo build --release \
+    && cargo rustc --release --bin bones -- -C target-feature=+crt-static
 
-FROM debian:bookworm-slim
+FROM scratch
 
-RUN useradd --system --uid 10001 --create-home bones \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
 COPY --from=builder /app/target/release/bones /app/bones
 COPY --from=builder /app/web /app/web
 

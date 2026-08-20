@@ -2,6 +2,7 @@
 name = "bones"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.98"
 description = "Bones — a high-risk 5-dice multiplayer game"
 license = "MIT"
 
