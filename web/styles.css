@@ -457,6 +457,7 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 .turn-points strong { font-family: var(--font-brand); font-size: 1.75rem; }
 
 .dice {
+  --die-slots: 5;
   --die-gap: clamp(0.28rem, 1.8vw, 0.7rem);
   display: flex;
   flex-wrap: nowrap;
@@ -472,9 +473,9 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   -webkit-appearance: none;
   appearance: none;
   box-sizing: border-box;
-  flex: 1 1 0;
+  flex: 0 0 calc((100% - (var(--die-slots) - 1) * var(--die-gap)) / var(--die-slots));
+  width: calc((100% - (var(--die-slots) - 1) * var(--die-gap)) / var(--die-slots));
   max-width: 4.8rem;
-  width: auto;
   height: auto;
   min-width: 0;
   min-height: 0;
