@@ -207,11 +207,8 @@ impl Room {
                 self.host_id = self.players[0].id;
             }
             if !self.players.is_empty() {
-                self.status_message = format!(
-                    "{} left — {} player(s).",
-                    removed.name,
-                    self.players.len()
-                );
+                self.status_message =
+                    format!("{} left — {} player(s).", removed.name, self.players.len());
             }
             return Some((removed.id, self.players.is_empty()));
         }
@@ -241,11 +238,11 @@ impl Room {
             .player_index(you)
             .is_some_and(|i| self.players[i].forfeited);
         let steal_available = matches!(self.phase, GamePhase::StealWindow)
-            && self.pending_bank.as_ref().is_some_and(|p| p.leftover > 0)
+            && self.next_can_steal()
             && self
                 .players
                 .get(self.next_player_index())
-                .is_some_and(|p| p.id == you && p.on_board && !p.forfeited);
+                .is_some_and(|p| p.id == you);
 
         let you_can_act = !you_forfeited
             && match self.phase {
@@ -342,6 +339,22 @@ impl Room {
             }
         }
         self.set_action_deadline();
+    }
+
+    fn next_can_steal(&self) -> bool {
+        let Some(pending) = &self.pending_bank else {
+            return false;
+        };
+        self.next_can_steal_points(pending.points, pending.leftover)
+    }
+
+    fn next_can_steal_points(&self, points: u32, leftover: usize) -> bool {
+        if leftover == 0 || points == 0 {
+            return false;
+        }
+        self.players.get(self.next_player_index()).is_some_and(|p| {
+            !p.forfeited && p.on_board && p.score.saturating_add(points) <= WIN_SCORE
+        })
     }
 
     fn dice_to_roll(&self) -> usize {
@@ -550,10 +563,8 @@ impl Room {
             return Ok(());
         }
 
-        let next_idx = self.next_player_index();
-        let next_on_board = self.players.get(next_idx).is_some_and(|p| p.on_board);
-
-        if leftover > 0 && next_on_board {
+        if self.next_can_steal_points(points, leftover) {
+            let next_idx = self.next_player_index();
             let next_name = self.players[next_idx].name.clone();
             self.pending_bank = Some(PendingBank {
                 player_id,
@@ -604,6 +615,9 @@ impl Room {
         }
         if pending.leftover == 0 {
             return Err("No leftover dice".into());
+        }
+        if next_player.score.saturating_add(pending.points) > WIN_SCORE {
+            return Err("Stealing would go over 10,000".into());
         }
 
         self.turn_index = next;
@@ -1109,6 +1123,82 @@ mod tests {
         assert_eq!(room.phase, GamePhase::Finished);
         assert_eq!(room.winner_id, Some(id));
         assert_eq!(room.players[0].score, 10_000);
+    }
+
+    #[test]
+    fn bank_skips_steal_when_next_would_go_over() {
+        let mut room = room_with_two();
+        let a = room.players[0].id;
+        let b = room.players[1].id;
+        room.players[0].score = 1000;
+        room.players[0].on_board = true;
+        room.players[1].score = 9400;
+        room.players[1].on_board = true;
+        room.dice = vec![1, 1, 1, 2, 3];
+        room.awaiting_keep = true;
+        room.bank(a, vec![0, 1, 2]).unwrap();
+        assert_eq!(room.phase, GamePhase::Playing);
+        assert!(room.pending_bank.is_none());
+        assert_eq!(room.players[0].score, 2000);
+        assert_eq!(room.current_player().unwrap().id, b);
+        assert!(!room.view_for(b).steal_available);
+    }
+
+    #[test]
+    fn bank_offers_steal_when_next_can_take_it() {
+        let mut room = room_with_two();
+        let a = room.players[0].id;
+        let b = room.players[1].id;
+        room.players[0].score = 1000;
+        room.players[0].on_board = true;
+        room.players[1].score = 1000;
+        room.players[1].on_board = true;
+        room.dice = vec![1, 1, 1, 2, 3];
+        room.awaiting_keep = true;
+        room.bank(a, vec![0, 1, 2]).unwrap();
+        assert_eq!(room.phase, GamePhase::StealWindow);
+        let pending = room.pending_bank.as_ref().unwrap();
+        assert_eq!(pending.points, 1000);
+        assert_eq!(pending.leftover, 2);
+        assert!(room.view_for(b).steal_available);
+        assert!(!room.view_for(a).steal_available);
+    }
+
+    #[test]
+    fn bank_offers_steal_when_it_hits_exactly_10000() {
+        let mut room = room_with_two();
+        let a = room.players[0].id;
+        let b = room.players[1].id;
+        room.players[0].score = 1000;
+        room.players[0].on_board = true;
+        room.players[1].score = 9000;
+        room.players[1].on_board = true;
+        room.dice = vec![1, 1, 1, 2, 3];
+        room.awaiting_keep = true;
+        room.bank(a, vec![0, 1, 2]).unwrap();
+        assert_eq!(room.phase, GamePhase::StealWindow);
+        assert!(room.view_for(b).steal_available);
+    }
+
+    #[test]
+    fn steal_rejects_when_it_would_go_over() {
+        let mut room = room_with_two();
+        let a = room.players[0].id;
+        let b = room.players[1].id;
+        room.players[0].score = 1000;
+        room.players[0].on_board = true;
+        room.players[1].score = 9500;
+        room.players[1].on_board = true;
+        room.pending_bank = Some(PendingBank {
+            player_id: a,
+            points: 1000,
+            leftover: 2,
+        });
+        room.phase = GamePhase::StealWindow;
+        let err = room.steal(b).unwrap_err();
+        assert!(err.contains("over") || err.contains("10,000"));
+        assert_eq!(room.phase, GamePhase::StealWindow);
+        assert_eq!(room.players[0].score, 1000);
     }
 
     #[test]
