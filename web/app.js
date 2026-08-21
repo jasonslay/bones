@@ -134,6 +134,46 @@ function pathCode() {
   return fromQuery ? fromQuery.trim().toUpperCase() : "";
 }
 
+function storedRoomCode() {
+  return (localStorage.getItem("bones-room") || "").trim().toUpperCase();
+}
+
+/** Invite URL wins; otherwise the last table this phone was sitting at. */
+function lastRoomCode() {
+  return pathCode() || storedRoomCode();
+}
+
+function rememberRoom(code) {
+  if (!code) return;
+  localStorage.setItem("bones-room", String(code).toUpperCase());
+}
+
+function forgetRoom() {
+  localStorage.removeItem("bones-room");
+}
+
+function socketLooksAlive() {
+  return (
+    !!state.ws &&
+    state.ws.readyState === WebSocket.OPEN &&
+    !!state.playerId &&
+    Date.now() - (state.lastServerAt || 0) < 35_000
+  );
+}
+
+function dropSocket() {
+  const ws = state.ws;
+  if (!ws) return;
+  state.ws = null;
+  connecting = null;
+  state.playerId = null;
+  try {
+    ws.close();
+  } catch {
+    /* already closed */
+  }
+}
+
 function wsUrl() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${location.host}/ws`;
@@ -191,13 +231,12 @@ function connect() {
       if (msg.type === "welcome") succeed(ws);
     });
     ws.addEventListener("close", () => {
-      if (state.ws !== ws) return;
       if (!settled) {
         fail(new Error("Disconnected"));
         return;
       }
-      if (!state.playerId) return;
-      if (state.game?.code) scheduleReconnect();
+      if (state.ws !== ws) return;
+      if (lastRoomCode()) scheduleReconnect("Connection lost — reclaiming your seat…");
       else toast("Disconnected — refresh to rejoin");
     });
   }).finally(() => {
@@ -222,21 +261,35 @@ function startHeartbeat(ws) {
   }, 5_000);
 }
 
-function scheduleReconnect() {
+async function joinLastRoom() {
+  const code = lastRoomCode();
+  if (!code) return false;
+  const name = (state.playerName || localStorage.getItem("bones-name") || "").trim();
+  if (!name) return false;
+  state.playerName = name;
+  applyInvite(code);
+  rememberRoom(code);
+  if (!socketLooksAlive()) {
+    dropSocket();
+    await connect();
+  }
+  send({ type: "join_game", code, name, seat_key: seatKey() });
+  return true;
+}
+
+function scheduleReconnect(message) {
   if (state.reconnecting) return;
-  if (!(state.game?.code || pathCode())) return;
+  if (!lastRoomCode()) return;
   state.reconnecting = true;
-  toast("Connection lost — reclaiming your seat…");
+  toast(message || "Rejoining your table…");
   const attempt = async (n) => {
     try {
-      await connect();
       if (!state.reconnecting) return;
-      const code = state.game?.code || pathCode();
-      if (!code) {
-        goHome("That table is gone");
+      const ok = await joinLastRoom();
+      if (!ok) {
+        state.reconnecting = false;
         return;
       }
-      send({ type: "join_game", code, name: state.playerName || "Player", seat_key: seatKey() });
       state.reconnecting = false;
     } catch {
       if (!state.reconnecting) return;
@@ -244,6 +297,14 @@ function scheduleReconnect() {
     }
   };
   setTimeout(() => attempt(0), 400);
+}
+
+function resumeIfNeeded() {
+  const code = lastRoomCode();
+  if (!code) return;
+  if (!(state.playerName || localStorage.getItem("bones-name") || "").trim()) return;
+  if (socketLooksAlive() && state.boundCode === code && state.game?.code === code) return;
+  scheduleReconnect("Rejoining your table…");
 }
 
 function send(msg) {
@@ -263,7 +324,7 @@ function onServer(msg) {
       break;
     case "error":
       if (msg.message === "Game not found") {
-        const wasAtTable = Boolean(state.game?.code || state.reconnecting);
+        const wasAtTable = Boolean(state.game?.code || state.reconnecting || storedRoomCode());
         goHome(wasAtTable ? "That table is gone" : msg.message);
         break;
       }
@@ -273,8 +334,9 @@ function onServer(msg) {
     case "game_created":
     case "joined":
       state.boundCode = msg.code;
+      state.reconnecting = false;
       applyInvite(msg.code, msg.invite_path);
-      localStorage.setItem("bones-room", msg.code);
+      rememberRoom(msg.code);
       break;
     case "state":
       if (!state.boundCode || msg.code !== state.boundCode) break;
@@ -288,8 +350,9 @@ function onServer(msg) {
         }
       }
       state.game = msg;
+      state.reconnecting = false;
       applyInvite(msg.code, msg.invite_path);
-      localStorage.setItem("bones-room", msg.code);
+      rememberRoom(msg.code);
       renderGame();
       renderTimer();
       break;
@@ -308,7 +371,7 @@ function goHome(message) {
   state.boundCode = null;
   state.selected = new Set();
   state.reconnecting = false;
-  localStorage.removeItem("bones-room");
+  forgetRoom();
   history.replaceState(null, "", "/");
   const wrap = $("join-code-wrap");
   if (wrap) wrap.classList.add("hidden");
@@ -723,10 +786,11 @@ async function boot() {
   seatKey();
   $("player-name").value = state.playerName;
 
-  const code = pathCode();
+  const code = lastRoomCode();
   if (code) {
     $("join-code-wrap").classList.remove("hidden");
     $("join-code").value = code;
+    applyInvite(code);
   }
 
   $("home-form").addEventListener("submit", async (e) => {
@@ -744,7 +808,7 @@ async function boot() {
         send({ type: "leave_game" });
         state.game = null;
         state.boundCode = null;
-        localStorage.removeItem("bones-room");
+        forgetRoom();
         send({ type: "create_game", name, seat_key: rotateSeatKey() });
         return;
       }
@@ -756,6 +820,8 @@ async function boot() {
         return;
       }
       send({ type: "join_game", code: joinCode, name, seat_key: seatKey() });
+      rememberRoom(joinCode);
+      applyInvite(joinCode);
     } catch (err) {
       showHomeError(err.message || "Connection failed");
     }
@@ -796,13 +862,14 @@ async function boot() {
 
   setInterval(renderTimer, 250);
 
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && state.game?.code) {
-      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-        scheduleReconnect();
-      }
-    }
-  });
+  const onForeground = () => {
+    if (document.visibilityState === "visible") resumeIfNeeded();
+  };
+  document.addEventListener("visibilitychange", onForeground);
+  window.addEventListener("pageshow", onForeground);
+  window.addEventListener("online", onForeground);
+
+  if (code && state.playerName) resumeIfNeeded();
 }
 
 boot();
