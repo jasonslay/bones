@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bones</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -11,9 +12,9 @@
   <main id="app">
     <section id="screen-home" class="screen">
       <header class="brand-hero">
-        <p class="tagline">Five dice. High risk.</p>
+        <p class="tagline">Dice. High risk.</p>
         <h1 class="brand">Bones</h1>
-        <p class="lede">Create a table, send the invite link, roll until someone hits exactly 10,000.</p>
+        <p class="lede">Create a table, pick Bones or Farkle, send the invite link, roll until someone hits exactly 10,000.</p>
       </header>
       <form id="home-form" class="home-form">
         <label>
@@ -47,6 +48,36 @@
           <button type="button" id="copy-link" class="btn tiny">Copy invite link</button>
         </div>
       </div>
+      <div id="lobby-settings" class="lobby-settings hidden">
+        <fieldset class="mode-picker">
+          <legend>Game</legend>
+          <label class="mode-option">
+            <input type="radio" name="game-mode" value="bones" checked />
+            <span>
+              <strong>Bones</strong>
+              <em>5 dice · board at 1,000</em>
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="game-mode" value="farkle" />
+            <span>
+              <strong>Farkle</strong>
+              <em>6 dice · board at 500 · three pairs, straight, two triplets</em>
+            </span>
+          </label>
+        </fieldset>
+        <label class="idle-timeout-field">
+          Idle forfeit
+          <select id="idle-timeout">
+            <option value="off">Off</option>
+            <option value="30">30 seconds</option>
+            <option value="60" selected>1 minute</option>
+            <option value="120">2 minutes</option>
+            <option value="300">5 minutes</option>
+          </select>
+        </label>
+        <p id="lobby-settings-note" class="lobby-settings-note hidden">Only the host can change these.</p>
+      </div>
       <p id="turn-banner" class="turn-banner hidden" aria-live="polite"></p>
       <p id="turn-timer" class="turn-timer hidden" aria-live="polite"></p>
       <aside id="scoreboard" class="scoreboard" aria-label="Scores"></aside>
@@ -65,17 +96,7 @@
       </div>
       <details class="rules">
         <summary>How to play</summary>
-        <ul>
-          <li>Bones uses <strong>5 dice</strong> (not Farkle’s 6)</li>
-          <li>1s score 100 · 5s score 50</li>
-          <li>Three 1s = 1000 · five 1s = 2000</li>
-          <li>Three of a kind = face × 100 · four of a kind = face × 1000</li>
-          <li>Five of a kind (2–6) wins instantly</li>
-          <li>Get 1,000 in one turn to get on the board</li>
-          <li>First to <strong>exactly 10,000</strong> wins</li>
-          <li>On the board? You can steal leftover dice — unless that would put you over 10,000</li>
-          <li>Forfeit anytime, or automatically if you don’t play within 1 minute</li>
-        </ul>
+        <ul id="rules-list"></ul>
       </details>
     </section>
   </main>

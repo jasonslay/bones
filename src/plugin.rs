@@ -206,6 +206,18 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
                 }
             });
         }
+        ClientMessage::UpdateSettings {
+            mode,
+            idle_timeout_secs,
+        } => {
+            with_room_mut(world, channels, player_id, |room| {
+                if player_id != room.host_id {
+                    Err("Only the host can change settings".into())
+                } else {
+                    room.update_settings(mode, idle_timeout_secs)
+                }
+            });
+        }
         ClientMessage::Roll { indices } => {
             with_room_mut(world, channels, player_id, |room| {
                 room.roll(player_id, indices)

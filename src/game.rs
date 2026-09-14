@@ -1,8 +1,8 @@
 use crate::protocol::{
-    ACTION_TIMEOUT_MS, BOARD_THRESHOLD, DICE_COUNT, GamePhase, GameView, PendingBankView,
-    PlayerView, WIN_SCORE, invite_path,
+    DEFAULT_IDLE_TIMEOUT_SECS, GameMode, GamePhase, GameView, PendingBankView, PlayerView,
+    WIN_SCORE, invite_path,
 };
-use crate::scoring::{can_keep_die, has_any_score, score_dice, score_held};
+use crate::scoring::{can_keep_die, has_any_score, has_playable_keep, score_dice, score_held};
 use bevy::prelude::*;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,13 @@ pub struct Room {
     pub host_id: Uuid,
     pub players: Vec<Player>,
     pub phase: GamePhase,
+    #[serde(default)]
+    pub mode: GameMode,
+    #[serde(default = "default_board_threshold")]
+    pub board_threshold: u32,
+    /// `None` disables idle forfeit. Defaults to 60 seconds for older rooms.
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: Option<u64>,
     pub turn_index: usize,
     pub dice: Vec<u8>,
     pub selected: Vec<usize>,
@@ -35,6 +42,14 @@ pub struct Room {
     pub action_deadline_ms: Option<u64>,
     #[serde(default)]
     pub version: u64,
+}
+
+fn default_board_threshold() -> u32 {
+    GameMode::Bones.default_board_threshold()
+}
+
+fn default_idle_timeout_secs() -> Option<u64> {
+    Some(DEFAULT_IDLE_TIMEOUT_SECS)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -75,6 +90,35 @@ pub fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn format_points(n: u32) -> String {
+    let digits: Vec<char> = n.to_string().chars().collect();
+    let mut out = String::new();
+    for (i, ch) in digits.iter().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(*ch);
+    }
+    out
+}
+
+fn format_duration_secs(secs: u64) -> String {
+    if secs < 60 {
+        if secs == 1 {
+            "1 second".into()
+        } else {
+            format!("{secs} seconds")
+        }
+    } else {
+        let mins = secs / 60;
+        if mins == 1 {
+            "1 minute".into()
+        } else {
+            format!("{mins} minutes")
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForfeitCause {
     Manual,
@@ -83,11 +127,15 @@ pub enum ForfeitCause {
 
 impl Room {
     pub fn new(code: String, host: Player) -> Self {
+        let mode = GameMode::Bones;
         Self {
             code,
             host_id: host.id,
             players: vec![host],
             phase: GamePhase::Lobby,
+            mode,
+            board_threshold: mode.default_board_threshold(),
+            idle_timeout_secs: default_idle_timeout_secs(),
             turn_index: 0,
             dice: Vec::new(),
             selected: Vec::new(),
@@ -101,6 +149,10 @@ impl Room {
             action_deadline_ms: None,
             version: 0,
         }
+    }
+
+    pub fn dice_count(&self) -> usize {
+        self.mode.dice_count()
     }
 
     pub fn player_index(&self, id: Uuid) -> Option<usize> {
@@ -150,18 +202,23 @@ impl Room {
     }
 
     fn set_action_deadline(&mut self) {
-        self.action_deadline_ms = Some(now_ms().saturating_add(ACTION_TIMEOUT_MS));
+        self.action_deadline_ms = self
+            .idle_timeout_secs
+            .map(|secs| now_ms().saturating_add(secs.saturating_mul(1000)));
     }
 
     fn clear_action_deadline(&mut self) {
         self.action_deadline_ms = None;
     }
 
-    fn turn_hint(on_board: bool) -> &'static str {
+    fn turn_hint(&self, on_board: bool) -> String {
         if on_board {
-            "roll when ready"
+            "roll when ready".into()
         } else {
-            "need 1,000 in one turn to get on the board"
+            format!(
+                "need {} in one turn to get on the board",
+                format_points(self.board_threshold)
+            )
         }
     }
 
@@ -258,6 +315,10 @@ impl Room {
             code: self.code.clone(),
             invite_path: invite_path(&self.code),
             phase: self.phase,
+            mode: self.mode,
+            board_threshold: self.board_threshold,
+            dice_count: self.dice_count(),
+            idle_timeout_secs: self.idle_timeout_secs,
             players: self
                 .players
                 .iter()
@@ -291,6 +352,34 @@ impl Room {
         }
     }
 
+    pub fn update_settings(
+        &mut self,
+        mode: GameMode,
+        idle_timeout_secs: Option<u64>,
+    ) -> Result<(), String> {
+        if self.phase != GamePhase::Lobby {
+            return Err("Settings can only be changed in the lobby".into());
+        }
+        if let Some(secs) = idle_timeout_secs {
+            if !crate::protocol::IDLE_TIMEOUT_OPTIONS_SECS.contains(&secs) {
+                return Err("Invalid idle forfeit time".into());
+            }
+        }
+        self.mode = mode;
+        self.board_threshold = mode.default_board_threshold();
+        self.idle_timeout_secs = idle_timeout_secs;
+        let idle = match idle_timeout_secs {
+            Some(secs) => format!("idle forfeit after {}", format_duration_secs(secs)),
+            None => "idle forfeit off".into(),
+        };
+        self.status_message = format!(
+            "{} — need {} to get on the board · {idle}. Waiting for players…",
+            mode.label(),
+            format_points(self.board_threshold)
+        );
+        Ok(())
+    }
+
     pub fn start(&mut self) -> Result<(), String> {
         if self.phase != GamePhase::Lobby {
             return Err("Game already started".into());
@@ -306,7 +395,7 @@ impl Room {
             .current_player()
             .map(|p| p.name.clone())
             .unwrap_or_default();
-        self.status_message = format!("{name}'s turn — {}", Self::turn_hint(false));
+        self.status_message = format!("{name}'s turn — {}", self.turn_hint(false));
         Ok(())
     }
 
@@ -335,7 +424,7 @@ impl Room {
         if let Some(p) = self.current_player() {
             if !keep_dice {
                 self.status_message =
-                    format!("{}'s turn — {}", p.name, Self::turn_hint(p.on_board));
+                    format!("{}'s turn — {}", p.name, self.turn_hint(p.on_board));
             }
         }
         self.set_action_deadline();
@@ -359,7 +448,7 @@ impl Room {
 
     fn dice_to_roll(&self) -> usize {
         if self.bust_showing || self.dice.is_empty() {
-            DICE_COUNT
+            self.dice_count()
         } else {
             self.dice.len().saturating_sub(self.selected.len())
         }
@@ -381,7 +470,8 @@ impl Room {
         if unique.iter().any(|&i| i >= self.dice.len()) {
             return Err("Invalid die".into());
         }
-        unique.retain(|&i| can_keep_die(&self.dice, i));
+        let mode = self.mode;
+        unique.retain(|&i| can_keep_die(mode, &self.dice, i));
         self.selected = unique;
         Ok(())
     }
@@ -410,35 +500,115 @@ impl Room {
         self.awaiting_keep = true;
         self.steal_leftover = 0;
         self.bust_showing = false;
+        self.resolve_rolled_dice(player_id, None)
+    }
 
-        if !has_any_score(&self.dice) {
-            let name = self
-                .current_player()
-                .map(|p| p.name.clone())
-                .unwrap_or_default();
-            self.status_message = format!("{name} busted.");
-            self.turn_points = 0;
-            self.begin_next_turn(true);
+    /// Handle bust / auto-win / continue after `self.dice` was just rolled.
+    /// `steal_from` credits a busted steal back to the banker.
+    fn resolve_rolled_dice(
+        &mut self,
+        player_id: Uuid,
+        steal_from: Option<(Uuid, u32)>,
+    ) -> Result<(), String> {
+        let name = self
+            .current_player()
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+
+        let bust = |room: &mut Room, overshoot: bool| {
+            if let Some((banker_id, points)) = steal_from {
+                if let Some(idx) = room.player_index(banker_id) {
+                    room.players[idx].score += points;
+                }
+                room.status_message = if overshoot {
+                    format!(
+                        "{name} busted the steal — nothing scores without going over {}.",
+                        format_points(WIN_SCORE)
+                    )
+                } else {
+                    format!("{name} busted the steal.")
+                };
+            } else {
+                room.status_message = if overshoot {
+                    format!(
+                        "{name} busted — nothing scores without going over {}.",
+                        format_points(WIN_SCORE)
+                    )
+                } else {
+                    format!("{name} busted.")
+                };
+            }
+            room.turn_points = 0;
+            room.begin_next_turn(true);
+        };
+
+        if !has_any_score(self.mode, &self.dice) {
+            bust(self, false);
             return Ok(());
         }
 
-        if let Some(outcome) = score_dice(&self.dice) {
+        if !self.has_playable_keep_now() {
+            bust(self, true);
+            return Ok(());
+        }
+
+        if let Some(outcome) = score_dice(self.mode, &self.dice) {
             if outcome.auto_win {
                 self.winner_id = Some(player_id);
                 self.phase = GamePhase::Finished;
                 self.clear_action_deadline();
-                let name = self
-                    .current_player()
-                    .map(|p| p.name.clone())
-                    .unwrap_or_default();
-                self.status_message =
-                    format!("{name} rolled five of a kind and wins automatically!");
+                self.status_message = if steal_from.is_some() {
+                    format!("{name} stole and rolled five of a kind — automatic win!")
+                } else {
+                    format!("{name} rolled five of a kind and wins automatically!")
+                };
                 return Ok(());
             }
         }
 
-        self.status_message = "Select scoring dice, then roll again or bank".into();
+        self.status_message = if steal_from.is_some() {
+            format!(
+                "{name} steals with {} pending! Select scoring dice.",
+                format_points(self.turn_points)
+            )
+        } else {
+            "Select scoring dice, then roll again or bank".into()
+        };
         self.set_action_deadline();
+        Ok(())
+    }
+
+    fn has_playable_keep_now(&self) -> bool {
+        let Some(cur) = self.current_player() else {
+            return false;
+        };
+        has_playable_keep(
+            self.mode,
+            &self.dice,
+            cur.score,
+            self.turn_points,
+            cur.on_board,
+            WIN_SCORE,
+        )
+    }
+
+    fn check_keep_legal(&self, points: u32, auto_win: bool) -> Result<(), String> {
+        if auto_win || points == 0 {
+            return Ok(());
+        }
+        let cur = self.current_player().ok_or("No current player")?;
+        if !cur.on_board {
+            return Ok(());
+        }
+        let pending = self.turn_points.saturating_add(points);
+        let new_score = cur.score.saturating_add(pending);
+        if new_score > WIN_SCORE {
+            return Err(format!(
+                "Must hit exactly {}. That keep would make {}.",
+                format_points(WIN_SCORE),
+                format_points(new_score)
+            ));
+        }
         Ok(())
     }
 
@@ -454,8 +624,10 @@ impl Room {
             return Err("Roll first".into());
         }
 
-        let outcome = score_held(&self.dice, &indices)
+        let outcome = score_held(self.mode, &self.dice, &indices)
             .ok_or_else(|| "Select a scoring combination first".to_string())?;
+
+        self.check_keep_legal(outcome.points, outcome.auto_win)?;
 
         if outcome.auto_win {
             self.winner_id = Some(player_id);
@@ -478,14 +650,16 @@ impl Room {
             self.steal_leftover = 0;
             self.dice.clear();
             self.selected.clear();
+            let n = self.dice_count();
             self.status_message = format!(
-                "Hot dice! Turn total {} — roll all five again or bank",
-                self.turn_points
+                "Hot dice! Turn total {} — roll all {n} again or bank",
+                format_points(self.turn_points)
             );
         } else {
             self.status_message = format!(
                 "Kept for {} — turn total {}. Roll remaining or bank.",
-                outcome.points, self.turn_points
+                format_points(outcome.points),
+                format_points(self.turn_points)
             );
         }
         self.set_action_deadline();
@@ -498,9 +672,10 @@ impl Room {
         }
         let cur = self.current_player().ok_or("No current player")?;
         if !cur.on_board {
-            if points < BOARD_THRESHOLD {
+            if points < self.board_threshold {
                 return Err(format!(
-                    "Need at least {BOARD_THRESHOLD} in one turn to get on the board"
+                    "Need at least {} in one turn to get on the board",
+                    format_points(self.board_threshold)
                 ));
             }
             return Ok(());
@@ -508,7 +683,9 @@ impl Room {
         let new_score = cur.score.saturating_add(points);
         if new_score > WIN_SCORE {
             return Err(format!(
-                "Must hit exactly {WIN_SCORE}. Banking would make {new_score}."
+                "Must hit exactly {}. Banking would make {}.",
+                format_points(WIN_SCORE),
+                format_points(new_score)
             ));
         }
         Ok(())
@@ -522,7 +699,7 @@ impl Room {
             return Err("Not your turn".into());
         }
         if self.awaiting_keep {
-            let outcome = score_held(&self.dice, &indices)
+            let outcome = score_held(self.mode, &self.dice, &indices)
                 .ok_or_else(|| "Select a scoring combination first".to_string())?;
             if outcome.auto_win {
                 return self.keep(player_id, indices);
@@ -547,7 +724,11 @@ impl Room {
             let player = self.current_player_mut().unwrap();
             player.score = points;
             player.on_board = true;
-            self.status_message = format!("{name} is on the board with {points}!");
+            self.status_message = format!(
+                "{} is on the board with {}!",
+                name,
+                format_points(points)
+            );
             self.begin_next_turn(false);
             return Ok(());
         }
@@ -559,7 +740,11 @@ impl Room {
             self.winner_id = Some(player_id);
             self.phase = GamePhase::Finished;
             self.clear_action_deadline();
-            self.status_message = format!("{name} hits exactly {WIN_SCORE} and wins!");
+            self.status_message = format!(
+                "{} hits exactly {} and wins!",
+                name,
+                format_points(WIN_SCORE)
+            );
             return Ok(());
         }
 
@@ -572,14 +757,22 @@ impl Room {
                 leftover,
             });
             self.phase = GamePhase::StealWindow;
-            self.status_message =
-                format!("{name} banks {points} with {leftover} dice left. {next_name} may steal!");
+            self.status_message = format!(
+                "{} banks {} with {leftover} dice left. {next_name} may steal!",
+                name,
+                format_points(points)
+            );
             self.set_action_deadline();
             Ok(())
         } else {
             let player = self.current_player_mut().unwrap();
             player.score += points;
-            self.status_message = format!("{name} banks {points}. Score: {}", player.score);
+            self.status_message = format!(
+                "{} banks {}. Score: {}",
+                name,
+                format_points(points),
+                format_points(player.score)
+            );
             self.begin_next_turn(false);
             Ok(())
         }
@@ -617,7 +810,10 @@ impl Room {
             return Err("No leftover dice".into());
         }
         if next_player.score.saturating_add(pending.points) > WIN_SCORE {
-            return Err("Stealing would go over 10,000".into());
+            return Err(format!(
+                "Stealing would go over {}",
+                format_points(WIN_SCORE)
+            ));
         }
 
         self.turn_index = next;
@@ -628,39 +824,8 @@ impl Room {
         self.selected.clear();
         self.dice = roll_n(pending.leftover);
         self.awaiting_keep = true;
-
-        let name = self
-            .current_player()
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
-
-        if !has_any_score(&self.dice) {
-            if let Some(idx) = self.player_index(pending.player_id) {
-                self.players[idx].score += pending.points;
-            }
-            self.status_message = format!("{name} busted the steal.");
-            self.turn_points = 0;
-            self.begin_next_turn(true);
-            return Ok(());
-        }
-
-        if let Some(outcome) = score_dice(&self.dice) {
-            if outcome.auto_win {
-                self.winner_id = Some(player_id);
-                self.phase = GamePhase::Finished;
-                self.clear_action_deadline();
-                self.status_message =
-                    format!("{name} stole and rolled five of a kind — automatic win!");
-                return Ok(());
-            }
-        }
-
-        self.status_message = format!(
-            "{name} steals with {} pending! Select scoring dice.",
-            self.turn_points
-        );
-        self.set_action_deadline();
-        Ok(())
+        self.bust_showing = false;
+        self.resolve_rolled_dice(player_id, Some((pending.player_id, pending.points)))
     }
 
     fn apply_pending_bank(&mut self) {
@@ -712,7 +877,10 @@ impl Room {
                 .find(|p| p.id == id)
                 .map(|p| (p.name.clone(), p.score))
         }) {
-            Some((name, score)) => format!("Host ended the game. {name} wins with {score}."),
+            Some((name, score)) => format!(
+                "Host ended the game. {name} wins with {}.",
+                format_points(score)
+            ),
             None => "Host ended the game. No winner.".into(),
         };
         Ok(())
@@ -762,7 +930,13 @@ impl Room {
 
         let reason = match cause {
             ForfeitCause::Manual => format!("{name} forfeited."),
-            ForfeitCause::Timeout => format!("{name} forfeited — no play within 1 minute."),
+            ForfeitCause::Timeout => {
+                let wait = self
+                    .idle_timeout_secs
+                    .map(format_duration_secs)
+                    .unwrap_or_else(|| "the time limit".into());
+                format!("{name} forfeited — no play within {wait}.")
+            }
         };
 
         if self.active_count() <= 1 {
@@ -776,7 +950,10 @@ impl Room {
                     .find(|p| p.id == id)
                     .map(|p| (p.name.clone(), p.score))
             }) {
-                Some((winner, score)) => format!("{reason} {winner} wins with {score}."),
+                Some((winner, score)) => format!(
+                    "{reason} {winner} wins with {}.",
+                    format_points(score)
+                ),
                 None => format!("{reason} No winner."),
             };
             return Ok(());
@@ -859,6 +1036,62 @@ mod tests {
     }
 
     #[test]
+    fn host_can_switch_to_farkle() {
+        let mut room = Room::new("FARK".into(), player("A"));
+        room.players.push(player("B"));
+        room.update_settings(GameMode::Farkle, Some(60)).unwrap();
+        assert_eq!(room.mode, GameMode::Farkle);
+        assert_eq!(room.board_threshold, 500);
+        assert_eq!(room.dice_count(), 6);
+        room.start().unwrap();
+        let id = room.players[0].id;
+        room.dice = vec![5, 2, 3, 4, 6, 6];
+        room.awaiting_keep = true;
+        room.keep(id, vec![0]).unwrap();
+        assert_eq!(room.turn_points, 50);
+        let err = room.bank(id, vec![]).unwrap_err();
+        assert!(err.contains("500"));
+        room.dice = vec![1, 1, 1, 2, 3, 4];
+        room.awaiting_keep = true;
+        room.turn_points = 0;
+        room.bank(id, vec![0, 1, 2]).unwrap();
+        assert_eq!(room.players[0].score, 1000);
+        assert!(room.players[0].on_board);
+    }
+
+    #[test]
+    fn settings_locked_after_start() {
+        let mut room = room_with_two();
+        assert!(room.update_settings(GameMode::Farkle, Some(60)).is_err());
+    }
+
+    #[test]
+    fn idle_forfeit_can_be_disabled() {
+        let mut room = Room::new("OFF".into(), player("A"));
+        room.players.push(player("B"));
+        room.update_settings(GameMode::Bones, None).unwrap();
+        assert!(room.idle_timeout_secs.is_none());
+        room.start().unwrap();
+        assert!(room.action_deadline_ms.is_none());
+        assert!(!room.check_timeout(now_ms().saturating_add(120_000)));
+        assert!(!room.players[0].forfeited);
+    }
+
+    #[test]
+    fn farkle_three_pairs_does_not_bust() {
+        let mut room = Room::new("PAIR".into(), player("A"));
+        room.players.push(player("B"));
+        room.update_settings(GameMode::Farkle, Some(60)).unwrap();
+        room.start().unwrap();
+        let id = room.players[0].id;
+        room.dice = vec![2, 2, 3, 3, 4, 4];
+        room.awaiting_keep = true;
+        room.bank(id, vec![0, 1, 2, 3, 4, 5]).unwrap();
+        assert_eq!(room.players[0].score, 1500);
+        assert!(room.players[0].on_board);
+    }
+
+    #[test]
     fn reclaim_keeps_host() {
         let seat = Uuid::new_v4();
         let old_id = Uuid::new_v4();
@@ -937,7 +1170,7 @@ mod tests {
         room.end_game(host).unwrap();
         assert_eq!(room.phase, GamePhase::Finished);
         assert_eq!(room.winner_id, Some(host));
-        assert!(room.status_message.contains("wins with 2400"));
+        assert!(room.status_message.contains("wins with 2,400"));
     }
 
     #[test]
@@ -1060,8 +1293,9 @@ mod tests {
         room.keep(id, vec![0]).unwrap();
         let deadline = room.action_deadline_ms.expect("deadline");
         let now = now_ms();
-        assert!(deadline >= now + crate::protocol::ACTION_TIMEOUT_MS - 2_000);
-        assert!(deadline <= now + crate::protocol::ACTION_TIMEOUT_MS + 2_000);
+        let timeout_ms = room.idle_timeout_secs.unwrap() * 1000;
+        assert!(deadline >= now + timeout_ms - 2_000);
+        assert!(deadline <= now + timeout_ms + 2_000);
     }
 
     #[test]
@@ -1123,6 +1357,44 @@ mod tests {
         assert_eq!(room.phase, GamePhase::Finished);
         assert_eq!(room.winner_id, Some(id));
         assert_eq!(room.players[0].score, 10_000);
+    }
+
+    #[test]
+    fn keep_rejects_selection_that_would_go_over() {
+        let mut room = room_with_two();
+        let id = room.players[0].id;
+        room.players[0].score = 9_800;
+        room.players[0].on_board = true;
+        room.mode = GameMode::Farkle;
+        room.dice = vec![2, 4, 5, 3, 3, 3];
+        room.awaiting_keep = true;
+        let err = room.keep(id, vec![3, 4, 5]).unwrap_err();
+        assert!(err.contains("exactly") || err.contains("10,000"));
+        assert_eq!(room.turn_points, 0);
+        assert!(room.awaiting_keep);
+        // Lone 5 still fits under the cap.
+        room.keep(id, vec![2]).unwrap();
+        assert_eq!(room.turn_points, 50);
+    }
+
+    #[test]
+    fn roll_busts_when_only_scoring_keeps_go_over() {
+        let mut room = room_with_two();
+        let id = room.players[0].id;
+        let next = room.players[1].id;
+        room.players[0].score = 9_800;
+        room.players[0].on_board = true;
+        room.mode = GameMode::Farkle;
+        room.dice = vec![2, 4, 3, 3, 3, 6];
+        room.selected.clear();
+        room.awaiting_keep = true;
+        room.bust_showing = false;
+        room.turn_points = 0;
+        room.resolve_rolled_dice(id, None).unwrap();
+        assert_eq!(room.current_player().unwrap().id, next);
+        assert!(room.bust_showing);
+        assert!(room.status_message.contains("going over"));
+        assert_eq!(room.dice, vec![2, 4, 3, 3, 3, 6]);
     }
 
     #[test]

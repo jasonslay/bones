@@ -404,12 +404,142 @@ function renderGame() {
   });
   $("screen-game")?.classList.toggle("in-play", !showInvite);
   $("status").textContent = g.message || "";
+  const brand = document.querySelector(".brand-inline");
+  if (brand) {
+    const modeLabel = gameMode(g) === "farkle" ? "Farkle" : "Bones";
+    brand.textContent = modeLabel;
+  }
+  const diceRoot = $("dice");
+  if (diceRoot) {
+    diceRoot.style.setProperty("--die-slots", String(g.dice_count || (gameMode(g) === "farkle" ? 6 : 5)));
+  }
   renderTurnBanner(g);
   renderScoreboard(g);
   updateTurnScore(g);
   renderDice(g);
   renderActions(g);
+  renderLobbySettings(g);
+  renderRules(g);
   renderSettings(g);
+}
+
+function rulesForGame(g) {
+  const mode = gameMode(g);
+  const idle = idleForfeitRule(g.idle_timeout_secs);
+  const sharedTail = [
+    "First to <strong>exactly 10,000</strong> wins",
+    "On the board? You can steal leftover dice — unless that would put you over 10,000",
+    idle,
+  ];
+  if (mode === "farkle") {
+    return [
+      "Get <strong>500</strong> in one turn to get on the board",
+      "1s score 100",
+      "5s score 50",
+      "3× 1s = 1,000",
+      "3 of a kind = face × 100",
+      "4 of a kind = face × 200",
+      "5 of a kind = face × 300",
+      "6 of a kind = face × 400",
+      "4× 1s = 2,000",
+      "5× 1s = 3,000",
+      "6× 1s = 4,000",
+      "Three pairs = 1,500",
+      "Straight 1–6 = 1,500",
+      "Two triplets = 2,500",
+      ...sharedTail,
+    ];
+  }
+  return [
+    "Get <strong>1,000</strong> in one turn to get on the board",
+    "1s score 100",
+    "5s score 50",
+    "3× 1s = 1,000",
+    "5× 1s = 2,000",
+    "3 of a kind = face × 100",
+    "4 of a kind = face × 200",
+    "5 of a kind (2–6) wins instantly",
+    ...sharedTail,
+  ];
+}
+
+function idleForfeitRule(secs) {
+  if (secs == null) return "Idle forfeit is off — take your time";
+  return `Forfeit anytime, or automatically if you don’t play within ${formatIdleLabel(secs)}`;
+}
+
+function formatIdleLabel(secs) {
+  const n = Number(secs);
+  if (!Number.isFinite(n) || n <= 0) return "the time limit";
+  if (n < 60) {
+    return n === 1 ? "1 second" : `${n} seconds`;
+  }
+  const mins = Math.round(n / 60);
+  return mins === 1 ? "1 minute" : `${mins} minutes`;
+}
+
+function renderRules(g) {
+  const list = $("rules-list");
+  if (!list) return;
+  const mode = gameMode(g);
+  const idleKey = g.idle_timeout_secs == null ? "off" : String(g.idle_timeout_secs);
+  const key = `${mode}:${idleKey}`;
+  if (list.dataset.rulesKey === key) return;
+  list.dataset.rulesKey = key;
+  list.innerHTML = rulesForGame(g).map((item) => `<li>${item}</li>`).join("");
+}
+
+function renderLobbySettings(g) {
+  const panel = $("lobby-settings");
+  if (!panel) return;
+  const inLobby = g.phase === "lobby";
+  panel.classList.toggle("hidden", !inLobby);
+  if (!inLobby) return;
+
+  const isHost = g.you_are === g.host_id;
+  panel.classList.toggle("readonly", !isHost);
+  const note = $("lobby-settings-note");
+  if (note) note.classList.toggle("hidden", isHost);
+
+  lobbySettingsSyncing = true;
+  const mode = gameMode(g);
+  document.querySelectorAll('input[name="game-mode"]').forEach((input) => {
+    input.checked = input.value === mode;
+    input.disabled = !isHost;
+  });
+  const idle = $("idle-timeout");
+  if (idle) {
+    idle.value = g.idle_timeout_secs == null ? "off" : String(g.idle_timeout_secs);
+    idle.disabled = !isHost;
+  }
+  lobbySettingsSyncing = false;
+}
+
+let lobbySettingsSyncing = false;
+
+function currentLobbyMode() {
+  const checked = document.querySelector('input[name="game-mode"]:checked');
+  return checked?.value === "farkle" ? "farkle" : "bones";
+}
+
+function currentIdleTimeoutSecs() {
+  const value = $("idle-timeout")?.value;
+  if (!value || value === "off") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 60;
+}
+
+function sendLobbySettings() {
+  if (lobbySettingsSyncing) return;
+  const g = state.game;
+  if (!g || g.phase !== "lobby" || g.you_are !== g.host_id) return;
+  const mode = currentLobbyMode();
+  const idle_timeout_secs = currentIdleTimeoutSecs();
+  const sameIdle =
+    (g.idle_timeout_secs == null && idle_timeout_secs == null) ||
+    g.idle_timeout_secs === idle_timeout_secs;
+  if (g.mode === mode && sameIdle) return;
+  send({ type: "update_settings", mode, idle_timeout_secs });
 }
 
 function renderScoreboard(g) {
@@ -445,7 +575,7 @@ function renderScoreboard(g) {
     const scoreEl = chip.querySelector(".pscore");
     const nameText = `${p.name}${you}`;
     if (nameEl.textContent !== nameText) nameEl.textContent = nameText;
-    const scoreText = String(p.score);
+    const scoreText = Number(p.score).toLocaleString("en-US");
     if (scoreEl.textContent !== scoreText) scoreEl.textContent = scoreText;
     const badges = [
       p.forfeited ? '<span class="badge forfeit">forfeited</span>' : "",
@@ -460,22 +590,75 @@ function renderScoreboard(g) {
   });
 }
 
-function scoreHeld(faces) {
+function gameMode(g = state.game) {
+  return g?.mode === "farkle" ? "farkle" : "bones";
+}
+
+function faceCounts(faces) {
   const counts = [0, 0, 0, 0, 0, 0, 0];
   for (const face of faces) {
     if (face >= 1 && face <= 6) counts[face] += 1;
   }
+  return counts;
+}
+
+function isStraight(counts) {
   for (let face = 1; face <= 6; face++) {
-    if (counts[face] === 5) {
-      return { points: face === 1 ? 2000 : 0, autoWin: face !== 1 };
+    if (counts[face] !== 1) return false;
+  }
+  return true;
+}
+
+function isThreePairs(counts) {
+  let pairs = 0;
+  for (let face = 1; face <= 6; face++) {
+    if (counts[face] === 2) pairs += 1;
+    else if (counts[face] !== 0) return false;
+  }
+  return pairs === 3;
+}
+
+function isTwoTriplets(counts) {
+  let trips = 0;
+  for (let face = 1; face <= 6; face++) {
+    if (counts[face] === 3) trips += 1;
+    else if (counts[face] !== 0) return false;
+  }
+  return trips === 2;
+}
+
+function farkleSpecial(counts, len) {
+  if (len !== 6) return null;
+  if (isStraight(counts) || isThreePairs(counts)) return { points: 1500, autoWin: false };
+  if (isTwoTriplets(counts)) return { points: 2500, autoWin: false };
+  return null;
+}
+
+function scoreHeld(faces, mode = gameMode()) {
+  const counts = faceCounts(faces);
+  if (mode === "farkle") {
+    const special = farkleSpecial(counts, faces.length);
+    if (special) return special;
+  }
+  if (mode === "bones") {
+    for (let face = 1; face <= 6; face++) {
+      if (counts[face] === 5) {
+        return { points: face === 1 ? 2000 : 0, autoWin: face !== 1 };
+      }
     }
   }
   let points = 0;
   for (let face = 1; face <= 6; face++) {
     let c = counts[face];
     if (!c) continue;
-    if (c >= 4) {
-      points += face * 1000;
+    if (mode === "farkle") {
+      if (c >= 3) {
+        const taken = Math.min(c, 6);
+        points += face === 1 ? 1000 * (taken - 2) : face * 100 * (taken - 2);
+        c -= taken;
+      }
+    } else if (c >= 4) {
+      points += face === 1 ? 1000 : face * 200;
       c -= 4;
     } else if (c >= 3) {
       points += face === 1 ? 1000 : face * 100;
@@ -491,6 +674,24 @@ function heldFaces(g) {
   return [...state.selected].map((i) => g.dice[i]).filter((f) => f >= 1 && f <= 6);
 }
 
+function formatScore(n) {
+  return Number(n).toLocaleString("en-US");
+}
+
+function currentPlayer(g) {
+  return g.players?.find((p) => p.id === g.you_are) || null;
+}
+
+/** Selection is usable for roll/bank (scores, and won't go over 10,000 if on the board). */
+function selectionPlayable(g, held) {
+  if (held.autoWin) return true;
+  if (!(held.points > 0)) return false;
+  const me = currentPlayer(g);
+  if (!me?.on_board) return true;
+  const pending = g.turn_points + held.points;
+  return me.score + pending <= 10000;
+}
+
 function updateTurnScore(g) {
   const tp = $("turn-points");
   if (g.phase !== "playing" && g.phase !== "steal_window") {
@@ -500,16 +701,20 @@ function updateTurnScore(g) {
   tp.classList.remove("hidden");
   let shown = g.turn_points;
   if (g.awaiting_keep && !g.bust) {
-    const held = scoreHeld(heldFaces(g));
+    const held = scoreHeld(heldFaces(g), gameMode(g));
     if (held.autoWin) {
-      tp.innerHTML = `Turn: <strong>${g.turn_points}</strong> · five of a kind wins`;
+      tp.innerHTML = `Turn: <strong>${formatScore(g.turn_points)}</strong> · five of a kind wins`;
       return;
     }
     shown += held.points;
+    if (held.points > 0 && !selectionPlayable(g, held)) {
+      tp.innerHTML = `Turn: <strong>${formatScore(shown)}</strong> · over 10,000 — unselect`;
+      return;
+    }
   }
-  tp.innerHTML = `Turn: <strong>${shown}</strong>`;
+  tp.innerHTML = `Turn: <strong>${formatScore(shown)}</strong>`;
   if (g.pending_bank) {
-    tp.innerHTML += ` · pending bank <strong>${g.pending_bank.points}</strong>`;
+    tp.innerHTML += ` · pending bank <strong>${formatScore(g.pending_bank.points)}</strong>`;
   }
 }
 
@@ -529,22 +734,28 @@ function isPickingKeep(g) {
 
 function selectedSet(g) {
   if (isPickingKeep(g)) return state.selected;
-  return new Set((g.selected || []).filter((i) => canKeepDie(g.dice || [], i)));
+  return new Set((g.selected || []).filter((i) => canKeepDie(g.dice || [], i, gameMode(g))));
 }
 
-function canKeepDie(dice, index) {
+function canKeepDie(dice, index, mode = gameMode()) {
   const face = dice[index];
   if (face === 1 || face === 5) return true;
   if (face < 2 || face > 6) return false;
-  return dice.filter((f) => f === face).length >= 3;
+  if (dice.filter((f) => f === face).length >= 3) return true;
+  if (mode === "farkle") {
+    const counts = faceCounts(dice);
+    return !!farkleSpecial(counts, dice.length);
+  }
+  return false;
 }
 
 function syncDieAppearance(g) {
   const selectable = diceSelectable(g);
   const selected = selectedSet(g);
+  const mode = gameMode(g);
   const root = $("dice");
   [...root.children].forEach((btn, i) => {
-    const keepable = canKeepDie(g.dice, i);
+    const keepable = canKeepDie(g.dice, i, mode);
     btn.classList.toggle("selected", selected.has(i) && keepable);
     btn.classList.toggle("bust", !!g.bust);
     btn.classList.toggle("dead", !!g.bust || (!keepable && !selected.has(i)));
@@ -576,7 +787,7 @@ function renderDice(g) {
           state.selected.delete(i);
         } else {
           if (btn.disabled) return;
-          if (!canKeepDie(g.dice, i)) return;
+          if (!canKeepDie(g.dice, i, gameMode(g))) return;
           state.selected.add(i);
         }
         syncDieAppearance(state.game);
@@ -676,8 +887,8 @@ function actionSpecs(g) {
   } else if (!g.you_can_act) {
     note("wait-turn", "Waiting for your turn…");
   } else if (g.awaiting_keep) {
-    const held = scoreHeld(heldFaces(g));
-    const canScore = held.points > 0 || held.autoWin;
+    const held = scoreHeld(heldFaces(g), gameMode(g));
+    const canScore = selectionPlayable(g, held);
     btn("roll", "Roll", "roll", { disabled: !canScore });
     btn("bank", "Bank", "bank", { className: "ghost", disabled: !canScore });
   } else {
@@ -859,6 +1070,11 @@ async function boot() {
       toast("Select and copy the invite link");
     }
   });
+
+  document.querySelectorAll('input[name="game-mode"]').forEach((input) => {
+    input.addEventListener("change", sendLobbySettings);
+  });
+  $("idle-timeout")?.addEventListener("change", sendLobbySettings);
 
   setInterval(renderTimer, 250);
 

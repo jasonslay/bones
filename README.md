@@ -1,6 +1,6 @@
 # Bones
 
-A multiplayer web version of **Bones** — a 5-dice high-risk game (not 6-dice Farkle). Create a room, copy the invite link (`/g/ABC12`), and roll.
+A multiplayer web dice table for **Bones** (5 dice) and **Farkle** (6 dice). Create a room, pick a game and board threshold, copy the invite link (`/g/ABC12`), and roll.
 
 ## Run
 
@@ -22,8 +22,9 @@ Production: [https://bones.jtslay.com](https://bones.jtslay.com) (`ghcr.io/jason
 
 ## Rules (summary)
 
-- Five dice. 1s = 100, 5s = 50; three/four of a kind; three 1s = 1000; five 1s = 2000.
-- Five of a kind (faces 2–6) wins instantly.
-- Need **1,000 in one turn** to get on the board.
+- Host picks **Bones** or **Farkle** in the lobby (board thresholds: 1,000 / 500), and can set or disable idle forfeit.
+- 1s = 100, 5s = 50; 3 of a kind = face × 100; 4 of a kind = face × 200; three 1s = 1000; five 1s = 2000.
+- Bones: five of a kind (faces 2–6) wins instantly.
+- Farkle extras: three pairs = 1500, straight 1–6 = 1500, two triplets = 2500; 5 / 6 of a kind = face × 300 / 400 (1s: 3000 / 4000).
 - Once on the board, steal leftover dice from the player before you.
 - First to **exactly 10,000** wins.
