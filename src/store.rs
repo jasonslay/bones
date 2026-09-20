@@ -24,10 +24,9 @@ else
   if tostring(obj.version) ~= ARGV[2] then return 0 end
   redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[3]))
 end
-redis.call('PUBLISH', KEYS[2], ARGV[4])
 local ttl = tonumber(ARGV[3])
 local code = cjson.decode(ARGV[1]).code
-for i = 3, #KEYS do
+for i = 2, #KEYS do
   redis.call('SET', KEYS[i], code, 'EX', ttl)
 end
 return 1
@@ -128,6 +127,9 @@ impl Store {
         mut shutdown: watch::Receiver<bool>,
         ready: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> redis::RedisResult<()> {
+        if *shutdown.borrow() {
+            return Ok(());
+        }
         let mut pubsub = self.client.get_async_pubsub().await?;
         pubsub.subscribe(CHANNEL).await?;
         tracing::info!("subscribed to {CHANNEL}");
@@ -192,15 +194,18 @@ impl Store {
         let script = redis::Script::new(SAVE_LUA);
         let mut invoke = script.prepare_invoke();
         invoke.key(Self::room_key(&room.code));
-        invoke.key(CHANNEL);
         for player in &room.players {
             invoke.key(Self::seat_key(player.seat_key));
         }
-        invoke.arg(json);
+        invoke.arg(&json);
         invoke.arg(expected);
         invoke.arg(ROOM_TTL_SECS);
-        invoke.arg(event);
         let saved: i32 = invoke.invoke_async(&mut conn).await?;
+        if saved == 1 {
+            if let Err(err) = conn.publish::<_, _, i32>(CHANNEL, event).await {
+                tracing::warn!("redis publish: {err}");
+            }
+        }
         Ok(saved == 1)
     }
 

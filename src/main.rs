@@ -42,11 +42,23 @@ fn main() {
         let subscriber = store.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         rt.spawn(async move {
-            if let Err(err) = subscriber
-                .subscribe(sub_channels, shutdown, Some(ready_tx))
-                .await
-            {
-                tracing::error!("redis subscriber ended: {err}");
+            let mut ready = Some(ready_tx);
+            loop {
+                if *shutdown.borrow() {
+                    break;
+                }
+                match subscriber
+                    .clone()
+                    .subscribe(sub_channels.clone(), shutdown.clone(), ready.take())
+                    .await
+                {
+                    Ok(()) => tracing::warn!("redis subscriber ended"),
+                    Err(err) => tracing::error!("redis subscriber ended: {err}"),
+                }
+                if *shutdown.borrow() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         });
         let _ = rt.block_on(ready_rx);
@@ -78,11 +90,12 @@ fn main() {
             channels
                 .bevy_tick_ms
                 .store(crate::game::now_ms(), Ordering::Relaxed);
+            app.update();
+            if app.should_exit().is_some() {
+                break;
+            }
             if channels.has_pending() || plugin::timeout_due(app.world()) {
-                app.update();
-                if app.should_exit().is_some() {
-                    break;
-                }
+                continue;
             }
             let wait = plugin::next_idle_wait(app.world());
             channels.wake.wait_timeout(wait);

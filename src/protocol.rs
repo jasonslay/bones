@@ -83,6 +83,8 @@ pub enum ClientMessage {
     Forfeit,
     Rematch,
     LeaveGame,
+    /// Quiet snapshot request — same as a refresh without reclaiming the seat.
+    Sync,
     Pong,
 }
 
@@ -177,6 +179,45 @@ mod tests {
         );
         let pong: ClientMessage = serde_json::from_str(r#"{"type":"pong"}"#).unwrap();
         assert!(matches!(pong, ClientMessage::Pong));
+        let sync: ClientMessage = serde_json::from_str(r#"{"type":"sync"}"#).unwrap();
+        assert!(matches!(sync, ClientMessage::Sync));
+    }
+
+    fn sample_view() -> GameView {
+        GameView {
+            code: "ABC12".into(),
+            invite_path: "/g/ABC12".into(),
+            phase: GamePhase::Playing,
+            mode: GameMode::Bones,
+            board_threshold: 1_000,
+            dice_count: 5,
+            idle_timeout_secs: Some(60),
+            players: Vec::new(),
+            current_player_id: None,
+            you_are: Uuid::nil(),
+            host_id: Uuid::nil(),
+            dice: vec![1, 2, 3, 4, 5],
+            selected: vec![0],
+            turn_points: 100,
+            awaiting_keep: true,
+            bust: false,
+            pending_bank: None,
+            steal_available: false,
+            you_can_act: true,
+            message: "Select scoring dice".into(),
+            winner_id: None,
+            action_deadline_ms: None,
+        }
+    }
+
+    #[test]
+    fn state_wire_flattens_game_view() {
+        let json = serde_json::to_value(ServerMessage::State(sample_view())).unwrap();
+        assert_eq!(json["type"], "state");
+        assert_eq!(json["code"], "ABC12");
+        assert_eq!(json["phase"], "playing");
+        assert_eq!(json["dice"][0], 1);
+        assert!(json.get("content").is_none());
     }
 
     #[test]

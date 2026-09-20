@@ -212,7 +212,7 @@ async fn client_session(socket: WebSocket, state: AppState) {
     let outbound = state.channels.outbound.clone();
     let mut shutdown_rx = state.channels.shutdown.subscribe();
     let mut write_shutdown = shutdown_rx.clone();
-    let write_task = tokio::spawn(async move {
+    let mut write_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(WS_PING_INTERVAL_MS));
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         interval.tick().await;
@@ -251,6 +251,7 @@ async fn client_session(socket: WebSocket, state: AppState) {
     loop {
         let msg = tokio::select! {
             _ = shutdown_rx.changed() => break,
+            _ = &mut write_task => break,
             msg = stream.next() => msg,
         };
         let Some(Ok(msg)) = msg else {

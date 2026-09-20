@@ -423,8 +423,7 @@ impl Room {
         }
         if let Some(p) = self.current_player() {
             if !keep_dice {
-                self.status_message =
-                    format!("{}'s turn — {}", p.name, self.turn_hint(p.on_board));
+                self.status_message = format!("{}'s turn — {}", p.name, self.turn_hint(p.on_board));
             }
         }
         self.set_action_deadline();
@@ -724,11 +723,8 @@ impl Room {
             let player = self.current_player_mut().unwrap();
             player.score = points;
             player.on_board = true;
-            self.status_message = format!(
-                "{} is on the board with {}!",
-                name,
-                format_points(points)
-            );
+            self.status_message =
+                format!("{} is on the board with {}!", name, format_points(points));
             self.begin_next_turn(false);
             return Ok(());
         }
@@ -950,10 +946,9 @@ impl Room {
                     .find(|p| p.id == id)
                     .map(|p| (p.name.clone(), p.score))
             }) {
-                Some((winner, score)) => format!(
-                    "{reason} {winner} wins with {}.",
-                    format_points(score)
-                ),
+                Some((winner, score)) => {
+                    format!("{reason} {winner} wins with {}.", format_points(score))
+                }
                 None => format!("{reason} No winner."),
             };
             return Ok(());

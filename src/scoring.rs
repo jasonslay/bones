@@ -67,11 +67,7 @@ fn farkle_special(counts: &[u8; 7], len: usize) -> Option<ScoreOutcome> {
 }
 
 fn three_of_a_kind_value(face: u8) -> u32 {
-    if face == 1 {
-        1000
-    } else {
-        (face as u32) * 100
-    }
+    if face == 1 { 1000 } else { (face as u32) * 100 }
 }
 
 /// Points for n-of-a-kind (n ≥ 3). Farkle: face×100×(n-2), with 1s from a 1000 base.
@@ -121,11 +117,7 @@ fn score_n_of_a_kind(mode: GameMode, counts: &[u8; 7]) -> Option<ScoreOutcome> {
             }
         } else if c >= 4 {
             // Bones: 4× = face × 200; four 1s keep the 1000 three-1s floor.
-            points += if face == 1 {
-                1000
-            } else {
-                (face as u32) * 200
-            };
+            points += if face == 1 { 1000 } else { (face as u32) * 200 };
             c -= 4;
         } else if c >= 3 {
             points += three_of_a_kind_value(face as u8);
@@ -245,11 +237,7 @@ pub fn score_held(mode: GameMode, dice: &[u8], selected: &[usize]) -> Option<Hel
                 c -= taken;
             }
         } else if c >= 4 {
-            points += if face == 1 {
-                1000
-            } else {
-                (face as u32) * 200
-            };
+            points += if face == 1 { 1000 } else { (face as u32) * 200 };
             take += 4;
             c -= 4;
         } else if c >= 3 {
@@ -382,18 +370,9 @@ mod tests {
 
     #[test]
     fn singles() {
-        assert_eq!(
-            score_dice(GameMode::Bones, &[1]).unwrap().points,
-            100
-        );
-        assert_eq!(
-            score_dice(GameMode::Bones, &[5]).unwrap().points,
-            50
-        );
-        assert_eq!(
-            score_dice(GameMode::Bones, &[1, 5]).unwrap().points,
-            150
-        );
+        assert_eq!(score_dice(GameMode::Bones, &[1]).unwrap().points, 100);
+        assert_eq!(score_dice(GameMode::Bones, &[5]).unwrap().points, 50);
+        assert_eq!(score_dice(GameMode::Bones, &[1, 5]).unwrap().points, 150);
         assert!(score_dice(GameMode::Bones, &[2]).is_none());
     }
 
@@ -424,10 +403,7 @@ mod tests {
 
     #[test]
     fn n_of_a_kind() {
-        assert_eq!(
-            score_dice(GameMode::Bones, &[2, 2, 2]).unwrap().points,
-            200
-        );
+        assert_eq!(score_dice(GameMode::Bones, &[2, 2, 2]).unwrap().points, 200);
         assert_eq!(
             score_dice(GameMode::Bones, &[3, 3, 3, 3]).unwrap().points,
             600
@@ -508,14 +484,8 @@ mod tests {
         assert!(!has_any_score(GameMode::Bones, &[2, 3, 4, 6, 6]));
         assert!(has_any_score(GameMode::Bones, &[2, 3, 4, 6, 5]));
         assert!(has_any_score(GameMode::Bones, &[2, 2, 2, 3, 4]));
-        assert!(has_any_score(
-            GameMode::Farkle,
-            &[2, 2, 3, 3, 4, 4]
-        ));
-        assert!(has_any_score(
-            GameMode::Farkle,
-            &[1, 2, 3, 4, 5, 6]
-        ));
+        assert!(has_any_score(GameMode::Farkle, &[2, 2, 3, 3, 4, 4]));
+        assert!(has_any_score(GameMode::Farkle, &[1, 2, 3, 4, 5, 6]));
     }
 
     #[test]

@@ -313,6 +313,12 @@ function send(msg) {
   }
 }
 
+function requestSync() {
+  if (!state.boundCode) return;
+  if (state.ws?.readyState !== WebSocket.OPEN) return;
+  send({ type: "sync" });
+}
+
 function onServer(msg) {
   state.lastServerAt = Date.now();
   switch (msg.type) {
@@ -321,6 +327,7 @@ function onServer(msg) {
       break;
     case "ping":
       send({ type: "pong" });
+      requestSync();
       break;
     case "error":
       if (msg.message === "Game not found") {
@@ -333,13 +340,24 @@ function onServer(msg) {
       break;
     case "game_created":
     case "joined":
-      state.boundCode = msg.code;
+      state.boundCode = String(msg.code || "").toUpperCase();
       state.reconnecting = false;
       applyInvite(msg.code, msg.invite_path);
       rememberRoom(msg.code);
       break;
-    case "state":
-      if (!state.boundCode || msg.code !== state.boundCode) break;
+    case "state": {
+      const code = String(msg.code || "").toUpperCase();
+      if (!code) break;
+      if (state.boundCode && code !== state.boundCode) break;
+      if (!state.boundCode) {
+        const expected = lastRoomCode();
+        if (expected) {
+          if (code !== expected) break;
+        } else if (!state.reconnecting) {
+          break;
+        }
+      }
+      state.boundCode = code;
       {
         const facesKey = (msg.dice || []).join(",");
         const kept = (msg.selected || []).filter((i) => canKeepDie(msg.dice || [], i));
@@ -356,6 +374,7 @@ function onServer(msg) {
       renderGame();
       renderTimer();
       break;
+    }
     default:
       break;
   }
@@ -1077,12 +1096,16 @@ async function boot() {
   $("idle-timeout")?.addEventListener("change", sendLobbySettings);
 
   setInterval(renderTimer, 250);
+  setInterval(requestSync, 1_000);
 
   const onForeground = () => {
     if (document.visibilityState === "visible") resumeIfNeeded();
   };
   document.addEventListener("visibilitychange", onForeground);
-  window.addEventListener("pageshow", onForeground);
+  window.addEventListener("pageshow", (ev) => {
+    if (ev.persisted) dropSocket();
+    onForeground();
+  });
   window.addEventListener("online", onForeground);
 
   if (code && state.playerName) resumeIfNeeded();

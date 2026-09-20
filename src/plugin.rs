@@ -2,7 +2,7 @@ use crate::game::{GameRooms, Player, Room, generate_code};
 use crate::protocol::{ClientMessage, GamePhase, ServerMessage, invite_path};
 use crate::store::{Store, StoreEvent};
 use bevy::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -133,6 +133,7 @@ impl Plugin for BonesGamePlugin {
 fn process_net_commands(world: &mut World) {
     let channels = world.resource::<NetChannels>().clone();
     apply_remote_events(world, &channels);
+    pull_store_updates(world, &channels);
 
     let mut batch = Vec::new();
     if let Ok(mut guard) = channels.commands.lock() {
@@ -259,6 +260,9 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
         }
         ClientMessage::LeaveGame => {
             leave_player(world, channels, player_id);
+        }
+        ClientMessage::Sync => {
+            resync_player(world, channels, player_id);
         }
         ClientMessage::Pong => {}
     }
@@ -659,6 +663,69 @@ fn apply_remote_events(world: &mut World, channels: &NetChannels) {
     }
 }
 
+fn pull_store_updates(world: &mut World, channels: &NetChannels) {
+    let Some(store) = &channels.store else {
+        return;
+    };
+    let mut codes = Vec::new();
+    if let Ok(map) = channels.player_rooms.lock() {
+        for code in map.values() {
+            if !codes.iter().any(|c| c == code) {
+                codes.push(code.clone());
+            }
+        }
+    }
+    for code in codes {
+        let Ok(Some(incoming)) = store.get(&code) else {
+            continue;
+        };
+        let newer = world
+            .resource::<GameRooms>()
+            .by_code
+            .get(&code)
+            .and_then(|entity| world.get::<Room>(*entity))
+            .map(|local| incoming.version > local.version)
+            .unwrap_or(true);
+        if !newer {
+            continue;
+        }
+        let code = incoming.code.clone();
+        upsert_room(world, incoming);
+        broadcast_room(world, channels, &code);
+    }
+}
+
+fn player_room_code(channels: &NetChannels, player_id: Uuid) -> Option<String> {
+    channels
+        .player_rooms
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&player_id).cloned())
+}
+
+fn resync_player(world: &mut World, channels: &NetChannels, player_id: Uuid) {
+    let Some(code) = player_room_code(channels, player_id) else {
+        return;
+    };
+    if let Some(store) = &channels.store {
+        match load_store_room(world, store, &code) {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => return,
+        }
+    }
+    let Some(entity) = world.resource::<GameRooms>().by_code.get(&code).copied() else {
+        return;
+    };
+    let Some(room) = world.get::<Room>(entity) else {
+        return;
+    };
+    send(
+        channels,
+        player_id,
+        ServerMessage::State(room.view_for(player_id)),
+    );
+}
+
 fn send(channels: &NetChannels, player_id: Uuid, msg: ServerMessage) {
     if let Ok(map) = channels.outbound.lock() {
         if let Some(tx) = map.get(&player_id) {
@@ -678,7 +745,14 @@ pub fn broadcast_room(world: &World, channels: &NetChannels, code: &str) {
     let Some(room) = world.get::<Room>(entity) else {
         return;
     };
-    let players: Vec<Uuid> = room.players.iter().map(|p| p.id).collect();
+    let mut players: HashSet<Uuid> = room.players.iter().map(|p| p.id).collect();
+    if let Ok(map) = channels.player_rooms.lock() {
+        for (pid, room_code) in map.iter() {
+            if room_code == code {
+                players.insert(*pid);
+            }
+        }
+    }
     for pid in players {
         let view = room.view_for(pid);
         send(channels, pid, ServerMessage::State(view));
@@ -910,5 +984,105 @@ mod tests {
             .expect("room");
         let room = world.get::<Room>(entity).expect("room component");
         assert_eq!(room.players.len(), 2);
+    }
+
+    fn two_player_table() -> (
+        App,
+        NetChannels,
+        Uuid,
+        Uuid,
+        String,
+        mpsc::UnboundedReceiver<ServerMessage>,
+        mpsc::UnboundedReceiver<ServerMessage>,
+    ) {
+        let (mut app, channels) = setup();
+        let host = Uuid::new_v4();
+        let guest = Uuid::new_v4();
+        let mut host_rx = bind(&channels, host);
+        let mut guest_rx = bind(&channels, guest);
+        push(
+            &channels,
+            host,
+            ClientMessage::CreateGame {
+                name: "Host".into(),
+                seat_key: Uuid::new_v4(),
+            },
+        );
+        app.update();
+        let code = take(&mut host_rx)
+            .into_iter()
+            .find_map(|m| match m {
+                ServerMessage::GameCreated { code, .. } => Some(code),
+                _ => None,
+            })
+            .expect("created");
+        push(
+            &channels,
+            guest,
+            ClientMessage::JoinGame {
+                code: code.clone(),
+                name: "Guest".into(),
+                seat_key: Uuid::new_v4(),
+            },
+        );
+        app.update();
+        let _ = take(&mut host_rx);
+        let _ = take(&mut guest_rx);
+        (app, channels, host, guest, code, host_rx, guest_rx)
+    }
+
+    #[test]
+    fn guest_receives_live_state_when_host_plays() {
+        let (mut app, channels, host, _guest, _code, mut host_rx, mut guest_rx) =
+            two_player_table();
+        push(&channels, host, ClientMessage::StartGame);
+        app.update();
+        let _ = take(&mut host_rx);
+        let started = take(&mut guest_rx);
+        assert!(
+            started.iter().any(|m| matches!(
+                m,
+                ServerMessage::State(view) if view.phase == GamePhase::Playing
+            )),
+            "guest must see the game start without refreshing"
+        );
+
+        push(
+            &channels,
+            host,
+            ClientMessage::Roll {
+                indices: Vec::new(),
+            },
+        );
+        app.update();
+        let _ = take(&mut host_rx);
+        let after_roll = take(&mut guest_rx);
+        let view = after_roll.iter().find_map(|m| match m {
+            ServerMessage::State(view) => Some(view),
+            _ => None,
+        });
+        let view = view.expect("guest must receive state after the host rolls");
+        assert!(
+            !view.dice.is_empty() || view.bust,
+            "guest should see the rolled dice"
+        );
+    }
+
+    #[test]
+    fn sync_resends_state_to_the_requester() {
+        let (mut app, channels, host, guest, _code, mut host_rx, mut guest_rx) = two_player_table();
+        push(&channels, host, ClientMessage::StartGame);
+        app.update();
+        let _ = take(&mut host_rx);
+        let _ = take(&mut guest_rx);
+
+        push(&channels, guest, ClientMessage::Sync);
+        app.update();
+        assert!(take(&mut host_rx).is_empty(), "sync is a private snapshot");
+        let synced = take(&mut guest_rx);
+        assert!(synced.iter().any(|m| matches!(
+            m,
+            ServerMessage::State(view) if view.you_are == guest && view.phase == GamePhase::Playing
+        )));
     }
 }
