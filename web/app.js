@@ -537,16 +537,20 @@ function renderLobbySettings(g) {
   });
   const idle = $("idle-timeout");
   if (idle) {
-    idle.value = g.idle_timeout_secs == null ? "off" : String(g.idle_timeout_secs);
     idle.disabled = !isHost;
+    if (document.activeElement !== idle) {
+      idle.value = g.idle_timeout_secs == null ? "off" : String(g.idle_timeout_secs);
+    }
   }
   const board = $("board-threshold");
   if (board) {
-    const threshold = Number(g.board_threshold);
-    board.value = Number.isFinite(threshold)
-      ? String(threshold)
-      : String(defaultBoardThreshold(mode));
     board.disabled = !isHost;
+    if (document.activeElement !== board) {
+      const threshold = Number(g.board_threshold);
+      board.value = Number.isFinite(threshold)
+        ? String(threshold)
+        : String(defaultBoardThreshold(mode));
+    }
   }
   lobbySettingsSyncing = false;
 }
