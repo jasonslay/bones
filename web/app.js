@@ -452,7 +452,7 @@ function rulesForGame(g) {
   ];
   if (mode === "farkle") {
     return [
-      "Get <strong>500</strong> in one turn to get on the board",
+      boardRule(g),
       "1s score 100",
       "5s score 50",
       "3× 1s = 1,000",
@@ -470,7 +470,7 @@ function rulesForGame(g) {
     ];
   }
   return [
-    "Get <strong>1,000</strong> in one turn to get on the board",
+    boardRule(g),
     "1s score 100",
     "5s score 50",
     "3× 1s = 1,000",
@@ -480,6 +480,14 @@ function rulesForGame(g) {
     "5 of a kind (2–6) wins instantly",
     ...sharedTail,
   ];
+}
+
+function boardRule(g) {
+  const n = Number(g.board_threshold);
+  if (!Number.isFinite(n) || n <= 0) {
+    return "No minimum — bank any scoring turn to get on the board";
+  }
+  return `Get <strong>${formatScore(n)}</strong> in one turn to get on the board`;
 }
 
 function idleForfeitRule(secs) {
@@ -502,7 +510,8 @@ function renderRules(g) {
   if (!list) return;
   const mode = gameMode(g);
   const idleKey = g.idle_timeout_secs == null ? "off" : String(g.idle_timeout_secs);
-  const key = `${mode}:${idleKey}`;
+  const boardKey = g.board_threshold == null ? "default" : String(g.board_threshold);
+  const key = `${mode}:${idleKey}:${boardKey}`;
   if (list.dataset.rulesKey === key) return;
   list.dataset.rulesKey = key;
   list.innerHTML = rulesForGame(g).map((item) => `<li>${item}</li>`).join("");
@@ -531,6 +540,14 @@ function renderLobbySettings(g) {
     idle.value = g.idle_timeout_secs == null ? "off" : String(g.idle_timeout_secs);
     idle.disabled = !isHost;
   }
+  const board = $("board-threshold");
+  if (board) {
+    const threshold = Number(g.board_threshold);
+    board.value = Number.isFinite(threshold)
+      ? String(threshold)
+      : String(defaultBoardThreshold(mode));
+    board.disabled = !isHost;
+  }
   lobbySettingsSyncing = false;
 }
 
@@ -545,7 +562,24 @@ function currentIdleTimeoutSecs() {
   const value = $("idle-timeout")?.value;
   if (!value || value === "off") return null;
   const n = Number(value);
-  return Number.isFinite(n) ? n : 60;
+  return Number.isFinite(n) ? n : null;
+}
+
+function defaultBoardThreshold(mode = currentLobbyMode()) {
+  return mode === "farkle" ? 500 : 1000;
+}
+
+function currentBoardThreshold() {
+  const n = Number($("board-threshold")?.value);
+  return Number.isFinite(n) && n >= 0 ? n : defaultBoardThreshold();
+}
+
+function snapBoardThresholdForMode(mode) {
+  const el = $("board-threshold");
+  if (!el) return;
+  const current = Number(el.value);
+  const otherDefault = mode === "farkle" ? 1000 : 500;
+  if (current === otherDefault) el.value = String(defaultBoardThreshold(mode));
 }
 
 function sendLobbySettings() {
@@ -554,11 +588,12 @@ function sendLobbySettings() {
   if (!g || g.phase !== "lobby" || g.you_are !== g.host_id) return;
   const mode = currentLobbyMode();
   const idle_timeout_secs = currentIdleTimeoutSecs();
+  const board_threshold = currentBoardThreshold();
   const sameIdle =
     (g.idle_timeout_secs == null && idle_timeout_secs == null) ||
     g.idle_timeout_secs === idle_timeout_secs;
-  if (g.mode === mode && sameIdle) return;
-  send({ type: "update_settings", mode, idle_timeout_secs });
+  if (g.mode === mode && sameIdle && g.board_threshold === board_threshold) return;
+  send({ type: "update_settings", mode, idle_timeout_secs, board_threshold });
 }
 
 function renderScoreboard(g) {
@@ -1091,9 +1126,13 @@ async function boot() {
   });
 
   document.querySelectorAll('input[name="game-mode"]').forEach((input) => {
-    input.addEventListener("change", sendLobbySettings);
+    input.addEventListener("change", () => {
+      snapBoardThresholdForMode(currentLobbyMode());
+      sendLobbySettings();
+    });
   });
   $("idle-timeout")?.addEventListener("change", sendLobbySettings);
+  $("board-threshold")?.addEventListener("change", sendLobbySettings);
 
   setInterval(renderTimer, 250);
   setInterval(requestSync, 1_000);

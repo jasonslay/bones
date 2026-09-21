@@ -210,12 +210,15 @@ fn handle_command(world: &mut World, channels: &NetChannels, player_id: Uuid, ms
         ClientMessage::UpdateSettings {
             mode,
             idle_timeout_secs,
+            board_threshold,
         } => {
             with_room_mut(world, channels, player_id, |room| {
                 if player_id != room.host_id {
                     Err("Only the host can change settings".into())
                 } else {
-                    room.update_settings(mode, idle_timeout_secs)
+                    let threshold =
+                        board_threshold.unwrap_or_else(|| mode.default_board_threshold());
+                    room.update_settings(mode, idle_timeout_secs, threshold)
                 }
             });
         }

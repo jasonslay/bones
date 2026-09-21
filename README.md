@@ -22,7 +22,7 @@ Production: [https://bones.jtslay.com](https://bones.jtslay.com) (`ghcr.io/jason
 
 ## Rules (summary)
 
-- Host picks **Bones** or **Farkle** in the lobby (board thresholds: 1,000 / 500), and can set or disable idle forfeit.
+- Host picks **Bones** or **Farkle** in the lobby, the score needed to get on the board (defaults: 1,000 / 500), and can set or disable idle forfeit (off by default).
 - 1s = 100, 5s = 50; 3 of a kind = face × 100; 4 of a kind = face × 200; three 1s = 1000; five 1s = 2000.
 - Bones: five of a kind (faces 2–6) wins instantly.
 - Farkle extras: three pairs = 1500, straight 1–6 = 1500, two triplets = 2500; 5 / 6 of a kind = face × 300 / 400 (1s: 3000 / 4000).

@@ -1,6 +1,5 @@
 use crate::protocol::{
-    DEFAULT_IDLE_TIMEOUT_SECS, GameMode, GamePhase, GameView, PendingBankView, PlayerView,
-    WIN_SCORE, invite_path,
+    GameMode, GamePhase, GameView, PendingBankView, PlayerView, WIN_SCORE, invite_path,
 };
 use crate::scoring::{can_keep_die, has_any_score, has_playable_keep, score_dice, score_held};
 use bevy::prelude::*;
@@ -25,8 +24,8 @@ pub struct Room {
     pub mode: GameMode,
     #[serde(default = "default_board_threshold")]
     pub board_threshold: u32,
-    /// `None` disables idle forfeit. Defaults to 60 seconds for older rooms.
-    #[serde(default = "default_idle_timeout_secs")]
+    /// `None` disables idle forfeit. Missing field on older rooms stays off.
+    #[serde(default)]
     pub idle_timeout_secs: Option<u64>,
     pub turn_index: usize,
     pub dice: Vec<u8>,
@@ -46,10 +45,6 @@ pub struct Room {
 
 fn default_board_threshold() -> u32 {
     GameMode::Bones.default_board_threshold()
-}
-
-fn default_idle_timeout_secs() -> Option<u64> {
-    Some(DEFAULT_IDLE_TIMEOUT_SECS)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -135,7 +130,7 @@ impl Room {
             phase: GamePhase::Lobby,
             mode,
             board_threshold: mode.default_board_threshold(),
-            idle_timeout_secs: default_idle_timeout_secs(),
+            idle_timeout_secs: None,
             turn_index: 0,
             dice: Vec::new(),
             selected: Vec::new(),
@@ -356,6 +351,7 @@ impl Room {
         &mut self,
         mode: GameMode,
         idle_timeout_secs: Option<u64>,
+        board_threshold: u32,
     ) -> Result<(), String> {
         if self.phase != GamePhase::Lobby {
             return Err("Settings can only be changed in the lobby".into());
@@ -365,8 +361,11 @@ impl Room {
                 return Err("Invalid idle forfeit time".into());
             }
         }
+        if !crate::protocol::BOARD_THRESHOLD_OPTIONS.contains(&board_threshold) {
+            return Err("Invalid on-the-board minimum".into());
+        }
         self.mode = mode;
-        self.board_threshold = mode.default_board_threshold();
+        self.board_threshold = board_threshold;
         self.idle_timeout_secs = idle_timeout_secs;
         let idle = match idle_timeout_secs {
             Some(secs) => format!("idle forfeit after {}", format_duration_secs(secs)),
@@ -1034,7 +1033,8 @@ mod tests {
     fn host_can_switch_to_farkle() {
         let mut room = Room::new("FARK".into(), player("A"));
         room.players.push(player("B"));
-        room.update_settings(GameMode::Farkle, Some(60)).unwrap();
+        room.update_settings(GameMode::Farkle, Some(60), 500)
+            .unwrap();
         assert_eq!(room.mode, GameMode::Farkle);
         assert_eq!(room.board_threshold, 500);
         assert_eq!(room.dice_count(), 6);
@@ -1057,14 +1057,54 @@ mod tests {
     #[test]
     fn settings_locked_after_start() {
         let mut room = room_with_two();
-        assert!(room.update_settings(GameMode::Farkle, Some(60)).is_err());
+        assert!(
+            room.update_settings(GameMode::Farkle, Some(60), 500)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn idle_forfeit_defaults_off() {
+        let mut room = Room::new("NEW".into(), player("A"));
+        assert!(room.idle_timeout_secs.is_none());
+        room.players.push(player("B"));
+        room.start().unwrap();
+        assert!(room.action_deadline_ms.is_none());
+        assert!(!room.check_timeout(now_ms().saturating_add(120_000)));
+    }
+
+    #[test]
+    fn custom_board_threshold_enforced() {
+        let mut room = Room::new("CUST".into(), player("A"));
+        room.players.push(player("B"));
+        room.update_settings(GameMode::Bones, None, 2_000).unwrap();
+        assert_eq!(room.board_threshold, 2_000);
+        room.start().unwrap();
+        let id = room.players[0].id;
+        room.dice = vec![1, 1, 1, 2, 3];
+        room.awaiting_keep = true;
+        let err = room.bank(id, vec![0, 1, 2]).unwrap_err();
+        assert!(err.contains("2,000") || err.contains("2000"));
+        room.dice = vec![1, 1, 1, 1, 1];
+        room.awaiting_keep = true;
+        room.turn_points = 0;
+        room.bank(id, vec![0, 1, 2, 3, 4]).unwrap();
+        assert_eq!(room.players[0].score, 2_000);
+        assert!(room.players[0].on_board);
+    }
+
+    #[test]
+    fn invalid_board_threshold_rejected() {
+        let mut room = Room::new("BAD".into(), player("A"));
+        assert!(room.update_settings(GameMode::Bones, None, 123).is_err());
+        assert_eq!(room.board_threshold, 1_000);
     }
 
     #[test]
     fn idle_forfeit_can_be_disabled() {
         let mut room = Room::new("OFF".into(), player("A"));
         room.players.push(player("B"));
-        room.update_settings(GameMode::Bones, None).unwrap();
+        room.update_settings(GameMode::Bones, None, 1_000).unwrap();
         assert!(room.idle_timeout_secs.is_none());
         room.start().unwrap();
         assert!(room.action_deadline_ms.is_none());
@@ -1076,7 +1116,8 @@ mod tests {
     fn farkle_three_pairs_does_not_bust() {
         let mut room = Room::new("PAIR".into(), player("A"));
         room.players.push(player("B"));
-        room.update_settings(GameMode::Farkle, Some(60)).unwrap();
+        room.update_settings(GameMode::Farkle, Some(60), 500)
+            .unwrap();
         room.start().unwrap();
         let id = room.players[0].id;
         room.dice = vec![2, 2, 3, 3, 4, 4];
@@ -1270,6 +1311,7 @@ mod tests {
     #[test]
     fn timeout_forfeits_acting_player() {
         let mut room = room_with_two();
+        room.idle_timeout_secs = Some(60);
         let guest = room.players[1].id;
         room.action_deadline_ms = Some(now_ms().saturating_sub(1));
         assert!(room.check_timeout(now_ms()));
@@ -1281,8 +1323,8 @@ mod tests {
     #[test]
     fn playing_resets_the_action_deadline() {
         let mut room = room_with_two();
+        room.idle_timeout_secs = Some(60);
         let id = room.players[0].id;
-        room.action_deadline_ms = Some(now_ms() + 5_000);
         room.dice = vec![1, 2, 3, 4, 6];
         room.awaiting_keep = true;
         room.keep(id, vec![0]).unwrap();

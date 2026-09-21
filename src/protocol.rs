@@ -6,9 +6,10 @@ pub const BONES_BOARD_THRESHOLD: u32 = 1_000;
 pub const FARKLE_BOARD_THRESHOLD: u32 = 500;
 pub const BONES_DICE_COUNT: usize = 5;
 pub const FARKLE_DICE_COUNT: usize = 6;
-pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 60;
 /// Allowed idle forfeit durations (seconds). `None` disables the timer.
 pub const IDLE_TIMEOUT_OPTIONS_SECS: &[u64] = &[30, 60, 120, 300];
+/// Allowed scores to get on the board. `0` means any scoring bank qualifies.
+pub const BOARD_THRESHOLD_OPTIONS: &[u32] = &[0, 250, 500, 750, 1_000, 1_500, 2_000, 2_500, 3_000];
 /// Keepalive interval. Stays well under typical proxy idle timeouts (~100s).
 pub const WS_PING_INTERVAL_MS: u64 = 20_000;
 
@@ -61,6 +62,9 @@ pub enum ClientMessage {
         mode: GameMode,
         /// `null` disables idle forfeit. Otherwise one of the allowed durations.
         idle_timeout_secs: Option<u64>,
+        /// Omitted by older clients; the server then uses the mode default.
+        #[serde(default)]
+        board_threshold: Option<u32>,
     },
     StartGame,
     Roll {
@@ -231,10 +235,11 @@ mod tests {
             ClientMessage::UpdateSettings {
                 mode: GameMode::Farkle,
                 idle_timeout_secs: None,
+                board_threshold: None,
             }
         ));
         let msg: ClientMessage = serde_json::from_str(
-            r#"{"type":"update_settings","mode":"bones","idle_timeout_secs":120}"#,
+            r#"{"type":"update_settings","mode":"bones","idle_timeout_secs":120,"board_threshold":2000}"#,
         )
         .unwrap();
         assert!(matches!(
@@ -242,6 +247,7 @@ mod tests {
             ClientMessage::UpdateSettings {
                 mode: GameMode::Bones,
                 idle_timeout_secs: Some(120),
+                board_threshold: Some(2000),
             }
         ));
     }

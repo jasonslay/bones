@@ -55,27 +55,43 @@
             <input type="radio" name="game-mode" value="bones" checked />
             <span>
               <strong>Bones</strong>
-              <em>5 dice · board at 1,000</em>
+              <em>5 dice</em>
             </span>
           </label>
           <label class="mode-option">
             <input type="radio" name="game-mode" value="farkle" />
             <span>
               <strong>Farkle</strong>
-              <em>6 dice · board at 500 · three pairs, straight, two triplets</em>
+              <em>6 dice · three pairs, straight, two triplets</em>
             </span>
           </label>
         </fieldset>
-        <label class="idle-timeout-field">
-          Idle forfeit
-          <select id="idle-timeout">
-            <option value="off">Off</option>
-            <option value="30">30 seconds</option>
-            <option value="60" selected>1 minute</option>
-            <option value="120">2 minutes</option>
-            <option value="300">5 minutes</option>
-          </select>
-        </label>
+        <div class="lobby-fields">
+          <label class="lobby-field">
+            On the board
+            <select id="board-threshold">
+              <option value="0">No minimum</option>
+              <option value="250">250</option>
+              <option value="500">500</option>
+              <option value="750">750</option>
+              <option value="1000" selected>1,000</option>
+              <option value="1500">1,500</option>
+              <option value="2000">2,000</option>
+              <option value="2500">2,500</option>
+              <option value="3000">3,000</option>
+            </select>
+          </label>
+          <label class="lobby-field">
+            Idle forfeit
+            <select id="idle-timeout">
+              <option value="off" selected>Off</option>
+              <option value="30">30 seconds</option>
+              <option value="60">1 minute</option>
+              <option value="120">2 minutes</option>
+              <option value="300">5 minutes</option>
+            </select>
+          </label>
+        </div>
         <p id="lobby-settings-note" class="lobby-settings-note hidden">Only the host can change these.</p>
       </div>
       <p id="turn-banner" class="turn-banner hidden" aria-live="polite"></p>
