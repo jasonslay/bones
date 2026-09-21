@@ -125,6 +125,28 @@ function applyInvite(code, invitePath) {
   if (input) input.value = url;
   const room = $("room-code");
   if (room) room.textContent = String(code).toUpperCase();
+  renderInviteQr(url);
+}
+
+function renderInviteQr(url) {
+  const frame = $("invite-qr");
+  const renderSVG = window.renderInviteQrSvg;
+  if (!frame || typeof renderSVG !== "function" || frame.dataset.url === url) return;
+  frame.dataset.url = url;
+  frame.innerHTML = renderSVG(url, {
+    ecc: "M",
+    border: 2,
+    pixelSize: 4,
+    whiteColor: "#f3ead7",
+    blackColor: "#1a1410",
+  });
+  const svg = frame.querySelector("svg");
+  if (svg) {
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+  }
+  const large = $("invite-qr-large");
+  if (large) large.innerHTML = frame.innerHTML;
 }
 
 function pathCode() {
@@ -385,6 +407,43 @@ function leaveTable() {
   goHome("");
 }
 
+function reportContext() {
+  const g = state.game;
+  return {
+    name: state.playerName || "",
+    code: g?.code || lastRoomCode() || "",
+    phase: g?.phase || "home",
+    url: location.href,
+  };
+}
+
+async function submitBugReport(ev) {
+  ev.preventDefault();
+  const field = $("report-message");
+  const sendBtn = $("report-send");
+  const message = field?.value || "";
+  if (sendBtn) sendBtn.disabled = true;
+  try {
+    const res = await fetch("/report", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message, ...reportContext() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast(data.error || "Could not send the report");
+      return;
+    }
+    if (field) field.value = "";
+    $("report-dialog")?.close?.();
+    toast("Thanks — report sent");
+  } catch {
+    toast("Could not send the report");
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
+  }
+}
+
 function goHome(message) {
   state.game = null;
   state.boundCode = null;
@@ -408,6 +467,7 @@ function showHomeError(text) {
 }
 
 function showScreen(id) {
+  if (id !== "game") $("invite-qr-dialog")?.close?.();
   $("screen-home").classList.toggle("hidden", id !== "home");
   $("screen-game").classList.toggle("hidden", id !== "game");
 }
@@ -421,6 +481,7 @@ function renderGame() {
   document.querySelectorAll(".invite-bar").forEach((el) => {
     el.classList.toggle("hidden", !showInvite);
   });
+  if (!showInvite) $("invite-qr-dialog")?.close?.();
   $("screen-game")?.classList.toggle("in-play", !showInvite);
   $("status").textContent = g.message || "";
   const brand = document.querySelector(".brand-inline");
@@ -1124,6 +1185,19 @@ async function boot() {
 
   $("leave-table")?.addEventListener("click", leaveTable);
 
+  const reportDialog = $("report-dialog");
+  $("report-bug")?.addEventListener("click", () => {
+    if (!reportDialog) return;
+    if (typeof reportDialog.showModal === "function") reportDialog.showModal();
+    else reportDialog.setAttribute("open", "");
+    $("report-message")?.focus();
+  });
+  $("report-cancel")?.addEventListener("click", () => reportDialog?.close?.());
+  reportDialog?.addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.close();
+  });
+  $("report-form")?.addEventListener("submit", submitBugReport);
+
   $("settings-end-game")?.addEventListener("click", () => {
     if (!window.confirm("End the game now? Highest score on the board wins.")) return;
     send({ type: "end_game" });
@@ -1135,6 +1209,19 @@ async function boot() {
     send({ type: "forfeit" });
     const menu = $("game-settings");
     if (menu) menu.open = false;
+  });
+
+  $("invite-qr-btn")?.addEventListener("click", () => {
+    const dialog = $("invite-qr-dialog");
+    if (!dialog || !$("invite-qr")?.querySelector("svg")) {
+      toast("No room code yet");
+      return;
+    }
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  });
+  $("invite-qr-dialog")?.addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.close();
   });
 
   $("copy-link").addEventListener("click", async () => {

@@ -1,6 +1,7 @@
 mod game;
 mod plugin;
 mod protocol;
+mod report;
 mod scoring;
 mod server;
 mod store;

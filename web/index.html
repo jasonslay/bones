@@ -42,12 +42,25 @@
         </div>
       </header>
       <div id="invite-bar" class="invite-bar">
-        <label class="invite-label" for="invite-url">Invite link — includes the room code</label>
-        <div class="invite-row">
-          <input id="invite-url" class="invite-url" type="text" readonly aria-label="Invite link with game code" />
-          <button type="button" id="copy-link" class="btn tiny">Copy invite link</button>
+        <button type="button" id="invite-qr-btn" class="invite-qr-btn" aria-label="Show a larger QR code to join this table">
+          <span id="invite-qr" class="invite-qr"></span>
+          <span class="invite-qr-caption">Scan to join</span>
+        </button>
+        <div class="invite-copy">
+          <label class="invite-label" for="invite-url">Invite link — includes the room code</label>
+          <div class="invite-row">
+            <input id="invite-url" class="invite-url" type="text" readonly aria-label="Invite link with game code" />
+            <button type="button" id="copy-link" class="btn tiny">Copy invite link</button>
+          </div>
         </div>
       </div>
+      <dialog id="invite-qr-dialog" class="invite-qr-dialog">
+        <div id="invite-qr-large" class="invite-qr-large"></div>
+        <p class="invite-qr-dialog-caption">Scan to join</p>
+        <form method="dialog">
+          <button type="submit" class="btn ghost">Close</button>
+        </form>
+      </dialog>
       <div id="lobby-settings" class="lobby-settings hidden">
         <fieldset class="mode-picker">
           <legend>Game</legend>
@@ -105,8 +118,29 @@
         <ul id="rules-list"></ul>
       </details>
     </section>
+    <footer class="site-foot">
+      <button type="button" id="report-bug" class="report-bug">Report a bug</button>
+    </footer>
   </main>
+  <dialog id="report-dialog" class="report-dialog">
+    <form id="report-form" class="report-form">
+      <h2>Report a bug</h2>
+      <p class="report-lede">What went wrong? Room and table details are included automatically.</p>
+      <label>
+        What happened?
+        <textarea id="report-message" name="message" required minlength="8" maxlength="1000" rows="5" placeholder="Dice froze after a steal…"></textarea>
+      </label>
+      <div class="cta-row">
+        <button type="submit" id="report-send" class="btn primary">Send</button>
+        <button type="button" id="report-cancel" class="btn ghost">Cancel</button>
+      </div>
+    </form>
+  </dialog>
   <div id="toast" class="toast hidden" role="status"></div>
+  <script type="module">
+    import { renderSVG } from "/qr.js?v=0";
+    window.renderInviteQrSvg = renderSVG;
+  </script>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

@@ -78,6 +78,8 @@ html, body {
 #app {
   position: relative;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
   max-width: 720px;
   margin: 0 auto;
   padding: 1.5rem 1.25rem 3rem;
@@ -140,7 +142,8 @@ label {
   color: var(--ivory-dim);
 }
 
-input {
+input,
+textarea {
   font: inherit;
   font-size: 1.15rem;
   color: var(--ink);
@@ -151,7 +154,14 @@ input {
   outline: none;
 }
 
-input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
+textarea {
+  resize: vertical;
+  min-height: 7rem;
+  line-height: 1.4;
+}
+
+input:focus,
+textarea:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 
 #join-code {
   text-transform: uppercase;
@@ -254,6 +264,69 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   color: var(--ivory);
 }
 
+.site-foot {
+  margin-top: auto;
+  padding: 1.5rem 0 0.25rem;
+  text-align: center;
+}
+
+.report-bug {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ivory-dim);
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.report-bug:hover {
+  color: var(--ivory);
+}
+
+.report-dialog {
+  width: min(28rem, 92vw);
+  padding: 1.25rem 1.2rem 1.1rem;
+  border: none;
+  background: var(--ivory);
+  color: var(--ink);
+  box-shadow: 0 18px 40px var(--shadow);
+}
+
+.report-dialog::backdrop {
+  background: rgba(6, 22, 16, 0.72);
+}
+
+.report-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.report-form h2 {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: 2rem;
+  letter-spacing: 0.06em;
+}
+
+.report-lede {
+  margin: 0;
+  color: #5c5348;
+  font-size: 0.95rem;
+}
+
+.report-dialog .cta-row {
+  margin-top: 0.25rem;
+}
+
+.report-dialog .btn.ghost {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
 .game-settings {
   margin: 1.35rem auto 0;
   max-width: 16rem;
@@ -311,11 +384,92 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
 }
 
 .invite-bar {
+  display: grid;
+  gap: 1rem;
   margin: 0.75rem 0 1.25rem;
+  align-items: center;
 }
 
-#screen-game.in-play .invite-bar {
+@media (min-width: 32rem) {
+  .invite-bar {
+    grid-template-columns: auto 1fr;
+    gap: 1.15rem 1.35rem;
+  }
+}
+
+#screen-game.in-play .invite-bar,
+#screen-game.in-play .invite-qr-dialog {
   display: none !important;
+}
+
+.invite-qr-btn {
+  justify-self: center;
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.55rem 0.55rem 0.45rem;
+  background: var(--ivory);
+  border: none;
+  border-bottom: 3px solid var(--gold);
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.invite-qr-btn:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35);
+}
+
+.invite-qr svg {
+  display: block;
+  width: 9.25rem;
+  height: 9.25rem;
+}
+
+.invite-qr-caption,
+.invite-qr-dialog-caption {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.invite-qr-caption {
+  color: var(--ink);
+}
+
+.invite-copy {
+  min-width: 0;
+}
+
+.invite-qr-dialog {
+  padding: 1.15rem 1.15rem 1rem;
+  border: none;
+  background: var(--ivory);
+  color: var(--ink);
+  box-shadow: 0 18px 40px var(--shadow);
+}
+
+.invite-qr-dialog::backdrop {
+  background: rgba(6, 22, 16, 0.72);
+}
+
+.invite-qr-dialog-caption {
+  margin: 0.35rem 0 0.9rem;
+}
+
+.invite-qr-large svg {
+  display: block;
+  width: min(72vw, 22rem);
+  height: auto;
+  margin: 0 auto;
+}
+
+.invite-qr-dialog .btn {
+  width: 100%;
+  color: var(--ink);
+  border-color: var(--ink);
 }
 
 .lobby-settings {

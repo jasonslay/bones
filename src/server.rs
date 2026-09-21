@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse};
-use axum::routing::get;
+use axum::routing::{get, post};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -27,6 +27,7 @@ const SHUTDOWN_DRAIN: Duration = Duration::from_secs(5);
 pub struct AppState {
     pub channels: NetChannels,
     pub web_dir: PathBuf,
+    pub pushover: Option<crate::report::Pushover>,
 }
 
 pub fn new_channels(store: Option<crate::store::Store>) -> NetChannels {
@@ -45,14 +46,22 @@ pub fn new_channels(store: Option<crate::store::Store>) -> NetChannels {
 }
 
 pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
+    let pushover = crate::report::Pushover::from_env();
+    if pushover.is_some() {
+        tracing::info!("bug reports enabled (pushover)");
+    } else {
+        tracing::warn!("PUSHOVER_API_TOKEN or PUSHOVER_USER_KEY unset; bug reports disabled");
+    }
     let state = AppState {
         channels: channels.clone(),
         web_dir: web_dir.clone(),
+        pushover,
     };
 
     let app = Router::new()
         .route("/healthz", get(liveness))
         .route("/readyz", get(readiness))
+        .route("/report", post(crate::report::handle))
         .route("/ws", get(ws_handler))
         .route("/", get(index_page))
         .route("/g/{code}", get(index_page))
@@ -71,7 +80,11 @@ pub async fn serve(channels: NetChannels, web_dir: PathBuf, addr: SocketAddr) {
 
     let mut shutting_down = channels.shutdown.subscribe();
     let shutdown_tx = channels.shutdown.clone();
-    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
         wait_for_signal().await;
         tracing::info!("shutdown signal received");
         let _ = shutdown_tx.send(true);
@@ -153,7 +166,7 @@ async fn readiness(State(state): State<AppState>) -> impl IntoResponse {
 
 fn asset_ver(web_dir: &Path) -> String {
     let mut max = 0u64;
-    for name in ["app.js", "styles.css", "index.html"] {
+    for name in ["app.js", "styles.css", "index.html", "qr.js"] {
         if let Ok(meta) = std::fs::metadata(web_dir.join(name)) {
             if let Ok(modified) = meta.modified() {
                 if let Ok(dur) = modified.duration_since(UNIX_EPOCH) {
@@ -181,7 +194,8 @@ async fn index_page(State(state): State<AppState>) -> impl IntoResponse {
             "href=\"/styles.css\"",
             &format!("href=\"/styles.css?v={ver}\""),
         )
-        .replace("src=\"/app.js\"", &format!("src=\"/app.js?v={ver}\""));
+        .replace("src=\"/app.js\"", &format!("src=\"/app.js?v={ver}\""))
+        .replace("/qr.js?v=0", &format!("/qr.js?v={ver}"));
     let mut headers = HeaderMap::new();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     (headers, Html(page))
