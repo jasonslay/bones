@@ -361,8 +361,11 @@ impl Room {
                 return Err("Invalid idle forfeit time".into());
             }
         }
-        if !crate::protocol::BOARD_THRESHOLD_OPTIONS.contains(&board_threshold) {
-            return Err("Invalid on-the-board minimum".into());
+        if board_threshold > WIN_SCORE {
+            return Err(format!(
+                "On-the-board minimum cannot exceed {}",
+                format_points(WIN_SCORE)
+            ));
         }
         self.mode = mode;
         self.board_threshold = board_threshold;
@@ -371,11 +374,15 @@ impl Room {
             Some(secs) => format!("idle forfeit after {}", format_duration_secs(secs)),
             None => "idle forfeit off".into(),
         };
-        self.status_message = format!(
-            "{} — need {} to get on the board · {idle}. Waiting for players…",
-            mode.label(),
-            format_points(self.board_threshold)
-        );
+        let board = if board_threshold == 0 {
+            "no minimum to get on the board".into()
+        } else {
+            format!(
+                "need {} to get on the board",
+                format_points(board_threshold)
+            )
+        };
+        self.status_message = format!("{} — {board} · {idle}. Waiting for players…", mode.label());
         Ok(())
     }
 
@@ -1096,8 +1103,10 @@ mod tests {
     #[test]
     fn invalid_board_threshold_rejected() {
         let mut room = Room::new("BAD".into(), player("A"));
-        assert!(room.update_settings(GameMode::Bones, None, 123).is_err());
+        assert!(room.update_settings(GameMode::Bones, None, 10_001).is_err());
         assert_eq!(room.board_threshold, 1_000);
+        room.update_settings(GameMode::Bones, None, 750).unwrap();
+        assert_eq!(room.board_threshold, 750);
     }
 
     #[test]

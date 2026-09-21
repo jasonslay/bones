@@ -69,17 +69,7 @@
         <div class="lobby-fields">
           <label class="lobby-field">
             On the board
-            <select id="board-threshold">
-              <option value="0">No minimum</option>
-              <option value="250">250</option>
-              <option value="500">500</option>
-              <option value="750">750</option>
-              <option value="1000" selected>1,000</option>
-              <option value="1500">1,500</option>
-              <option value="2000">2,000</option>
-              <option value="2500">2,500</option>
-              <option value="3000">3,000</option>
-            </select>
+            <input id="board-threshold" type="number" min="0" max="10000" step="50" value="1000" inputmode="numeric" />
           </label>
           <label class="lobby-field">
             Idle forfeit

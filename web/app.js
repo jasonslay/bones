@@ -570,16 +570,25 @@ function defaultBoardThreshold(mode = currentLobbyMode()) {
 }
 
 function currentBoardThreshold() {
-  const n = Number($("board-threshold")?.value);
-  return Number.isFinite(n) && n >= 0 ? n : defaultBoardThreshold();
+  const raw = $("board-threshold")?.value;
+  if (raw == null || String(raw).trim() === "") return defaultBoardThreshold();
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return defaultBoardThreshold();
+  return Math.min(10000, Math.round(n));
 }
 
 function snapBoardThresholdForMode(mode) {
   const el = $("board-threshold");
   if (!el) return;
-  const current = Number(el.value);
+  const raw = String(el.value).trim();
+  const current = Number(raw);
+  const nextDefault = defaultBoardThreshold(mode);
+  if (raw === "" || !Number.isFinite(current)) {
+    el.value = String(nextDefault);
+    return;
+  }
   const otherDefault = mode === "farkle" ? 1000 : 500;
-  if (current === otherDefault) el.value = String(defaultBoardThreshold(mode));
+  if (current === otherDefault) el.value = String(nextDefault);
 }
 
 function sendLobbySettings() {
@@ -1132,7 +1141,13 @@ async function boot() {
     });
   });
   $("idle-timeout")?.addEventListener("change", sendLobbySettings);
-  $("board-threshold")?.addEventListener("change", sendLobbySettings);
+  $("board-threshold")?.addEventListener("change", () => {
+    const el = $("board-threshold");
+    if (el && String(el.value).trim() === "") {
+      el.value = String(defaultBoardThreshold());
+    }
+    sendLobbySettings();
+  });
 
   setInterval(renderTimer, 250);
   setInterval(requestSync, 1_000);

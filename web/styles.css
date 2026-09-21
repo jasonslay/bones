@@ -415,7 +415,8 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   color: var(--ivory-dim);
 }
 
-.lobby-field select {
+.lobby-field select,
+.lobby-field input[type="number"] {
   font: inherit;
   font-size: 1.05rem;
   letter-spacing: 0;
@@ -427,9 +428,11 @@ input:focus { box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35); }
   padding: 0.65rem 0.8rem;
   outline: none;
   width: 100%;
+  box-sizing: border-box;
 }
 
-.lobby-field select:focus {
+.lobby-field select:focus,
+.lobby-field input[type="number"]:focus {
   box-shadow: 0 0 0 3px rgba(212, 168, 75, 0.35);
 }
 

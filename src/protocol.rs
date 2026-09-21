@@ -8,8 +8,6 @@ pub const BONES_DICE_COUNT: usize = 5;
 pub const FARKLE_DICE_COUNT: usize = 6;
 /// Allowed idle forfeit durations (seconds). `None` disables the timer.
 pub const IDLE_TIMEOUT_OPTIONS_SECS: &[u64] = &[30, 60, 120, 300];
-/// Allowed scores to get on the board. `0` means any scoring bank qualifies.
-pub const BOARD_THRESHOLD_OPTIONS: &[u32] = &[0, 250, 500, 750, 1_000, 1_500, 2_000, 2_500, 3_000];
 /// Keepalive interval. Stays well under typical proxy idle timeouts (~100s).
 pub const WS_PING_INTERVAL_MS: u64 = 20_000;
 
