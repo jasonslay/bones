@@ -1142,6 +1142,18 @@ mod tests {
     }
 
     #[test]
+    fn idle_forfeit_allows_longer_lobby_options() {
+        let mut room = Room::new("LONG".into(), player("A"));
+        for secs in [600, 900, 1_200, 1_800] {
+            room.update_settings(GameMode::Bones, Some(secs), 1_000)
+                .unwrap();
+            assert_eq!(room.idle_timeout_secs, Some(secs));
+        }
+        assert!(room.update_settings(GameMode::Bones, Some(7 * 60), 1_000).is_err());
+        assert_eq!(format_duration_secs(1_800), "30 minutes");
+    }
+
+    #[test]
     fn farkle_three_pairs_does_not_bust() {
         let mut room = Room::new("PAIR".into(), player("A"));
         room.players.push(player("B"));

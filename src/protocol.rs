@@ -7,7 +7,7 @@ pub const FARKLE_BOARD_THRESHOLD: u32 = 500;
 pub const BONES_DICE_COUNT: usize = 5;
 pub const FARKLE_DICE_COUNT: usize = 6;
 /// Allowed idle forfeit durations (seconds). `None` disables the timer.
-pub const IDLE_TIMEOUT_OPTIONS_SECS: &[u64] = &[30, 60, 120, 300];
+pub const IDLE_TIMEOUT_OPTIONS_SECS: &[u64] = &[30, 60, 120, 300, 600, 900, 1_200, 1_800];
 /// Keepalive interval. Stays well under typical proxy idle timeouts (~100s).
 pub const WS_PING_INTERVAL_MS: u64 = 20_000;
 
