@@ -361,6 +361,11 @@ impl Room {
                 return Err("Invalid idle forfeit time".into());
             }
         }
+        let board_threshold = if mode != self.mode {
+            mode.default_board_threshold()
+        } else {
+            board_threshold
+        };
         if board_threshold > WIN_SCORE {
             return Err(format!(
                 "On-the-board minimum cannot exceed {}",
@@ -1107,6 +1112,21 @@ mod tests {
         assert_eq!(room.board_threshold, 1_000);
         room.update_settings(GameMode::Bones, None, 750).unwrap();
         assert_eq!(room.board_threshold, 750);
+    }
+
+    #[test]
+    fn switching_mode_resets_board_threshold_to_game_default() {
+        let mut room = Room::new("SNAP".into(), player("A"));
+        room.update_settings(GameMode::Bones, None, 2_000).unwrap();
+        assert_eq!(room.board_threshold, 2_000);
+        room.update_settings(GameMode::Farkle, None, 2_000).unwrap();
+        assert_eq!(room.mode, GameMode::Farkle);
+        assert_eq!(room.board_threshold, 500);
+        room.update_settings(GameMode::Farkle, None, 750).unwrap();
+        assert_eq!(room.board_threshold, 750);
+        room.update_settings(GameMode::Bones, None, 750).unwrap();
+        assert_eq!(room.mode, GameMode::Bones);
+        assert_eq!(room.board_threshold, 1_000);
     }
 
     #[test]

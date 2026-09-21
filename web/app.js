@@ -584,15 +584,7 @@ function currentBoardThreshold() {
 function snapBoardThresholdForMode(mode) {
   const el = $("board-threshold");
   if (!el) return;
-  const raw = String(el.value).trim();
-  const current = Number(raw);
-  const nextDefault = defaultBoardThreshold(mode);
-  if (raw === "" || !Number.isFinite(current)) {
-    el.value = String(nextDefault);
-    return;
-  }
-  const otherDefault = mode === "farkle" ? 1000 : 500;
-  if (current === otherDefault) el.value = String(nextDefault);
+  el.value = String(defaultBoardThreshold(mode));
 }
 
 function sendLobbySettings() {
