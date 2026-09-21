@@ -1149,7 +1149,10 @@ mod tests {
                 .unwrap();
             assert_eq!(room.idle_timeout_secs, Some(secs));
         }
-        assert!(room.update_settings(GameMode::Bones, Some(7 * 60), 1_000).is_err());
+        assert!(
+            room.update_settings(GameMode::Bones, Some(7 * 60), 1_000)
+                .is_err()
+        );
         assert_eq!(format_duration_secs(1_800), "30 minutes");
     }
 

@@ -34,6 +34,8 @@ const state = {
   boundCode: null,
   selected: new Set(),
   reconnecting: false,
+  reportLog: [],
+  lastReportSnapshot: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -389,6 +391,8 @@ function onServer(msg) {
           state.selected = new Set(kept);
         }
       }
+      rememberReportEvent(msg);
+      state.lastReportSnapshot = snapshotFromGame(msg);
       state.game = msg;
       state.reconnecting = false;
       applyInvite(msg.code, msg.invite_path);
@@ -407,13 +411,78 @@ function leaveTable() {
   goHome("");
 }
 
+function rememberReportEvent(g) {
+  if (!g) return;
+  const code = String(g.code || "").toUpperCase();
+  if (code && state._reportCode !== code) {
+    state.reportLog = [];
+    state._reportCode = code;
+    state._reportPhase = "";
+  }
+  const phase = g.phase || "";
+  const msg = String(g.message || "").trim();
+  const line = [phase, msg].filter(Boolean).join(" · ");
+  if (!line) return;
+  const log = state.reportLog;
+  if (log[log.length - 1] === line) return;
+  log.push(line);
+  if (log.length > 10) log.splice(0, log.length - 10);
+}
+
+function snapshotFromGame(g) {
+  if (!g) return null;
+  const players = (g.players || []).map((p) => ({
+    name: p.name || "",
+    score: Number(p.score) || 0,
+    on_board: !!p.on_board,
+    connected: p.connected !== false,
+    forfeited: !!p.forfeited,
+    you: p.id === g.you_are,
+    host: p.id === g.host_id,
+    current: p.id === g.current_player_id,
+  }));
+  const banker = g.pending_bank
+    ? (g.players || []).find((p) => p.id === g.pending_bank.player_id)
+    : null;
+  const winner = (g.players || []).find((p) => p.id === g.winner_id);
+  const selected = [...state.selected].sort((a, b) => a - b);
+  return {
+    code: g.code || "",
+    phase: g.phase || "",
+    mode: g.mode || "",
+    board_threshold: g.board_threshold,
+    idle_timeout_secs: g.idle_timeout_secs ?? null,
+    players,
+    dice: Array.isArray(g.dice) ? g.dice : [],
+    selected: selected.length ? selected : g.selected || [],
+    turn_points: Number(g.turn_points) || 0,
+    awaiting_keep: !!g.awaiting_keep,
+    bust: !!g.bust,
+    steal_available: !!g.steal_available,
+    you_can_act: !!g.you_can_act,
+    pending_bank: g.pending_bank
+      ? {
+          points: Number(g.pending_bank.points) || 0,
+          leftover: Number(g.pending_bank.leftover) || 0,
+          name: banker?.name || "",
+        }
+      : null,
+    status: g.message || "",
+    history: (state.reportLog || []).slice(-10),
+    winner: winner?.name || "",
+    reconnecting: !!state.reconnecting,
+  };
+}
+
 function reportContext() {
   const g = state.game;
+  const snapshot = snapshotFromGame(g) || state.lastReportSnapshot;
   return {
     name: state.playerName || "",
-    code: g?.code || lastRoomCode() || "",
-    phase: g?.phase || "home",
+    code: g?.code || snapshot?.code || lastRoomCode() || "",
+    phase: g?.phase || snapshot?.phase || "home",
     url: location.href,
+    snapshot,
   };
 }
 
@@ -445,6 +514,7 @@ async function submitBugReport(ev) {
 }
 
 function goHome(message) {
+  if (state.game) state.lastReportSnapshot = snapshotFromGame(state.game);
   state.game = null;
   state.boundCode = null;
   state.selected = new Set();
