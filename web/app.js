@@ -547,9 +547,10 @@ function renderLobbySettings(g) {
     board.disabled = !isHost;
     if (document.activeElement !== board) {
       const threshold = Number(g.board_threshold);
-      board.value = Number.isFinite(threshold)
-        ? String(threshold)
-        : String(defaultBoardThreshold(mode));
+      setBoardThresholdValue(
+        board,
+        Number.isFinite(threshold) ? threshold : defaultBoardThreshold(mode),
+      );
     }
   }
   lobbySettingsSyncing = false;
@@ -569,22 +570,46 @@ function currentIdleTimeoutSecs() {
   return Number.isFinite(n) ? n : null;
 }
 
+const BOARD_THRESHOLD_NUDGE = 50;
+
 function defaultBoardThreshold(mode = currentLobbyMode()) {
   return mode === "farkle" ? 500 : 1000;
 }
 
-function currentBoardThreshold() {
-  const raw = $("board-threshold")?.value;
-  if (raw == null || String(raw).trim() === "") return defaultBoardThreshold();
+function parseBoardThreshold(raw, fallback = defaultBoardThreshold()) {
+  if (raw == null || String(raw).trim() === "") return fallback;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return defaultBoardThreshold();
+  if (!Number.isFinite(n) || n < 0) return fallback;
   return Math.min(10000, Math.round(n));
+}
+
+function currentBoardThreshold() {
+  return parseBoardThreshold($("board-threshold")?.value);
+}
+
+function setBoardThresholdValue(el, value) {
+  if (!el) return;
+  el.value = String(value);
+  el.dataset.boardLast = el.value;
 }
 
 function snapBoardThresholdForMode(mode) {
   const el = $("board-threshold");
   if (!el) return;
-  el.value = String(defaultBoardThreshold(mode));
+  setBoardThresholdValue(el, defaultBoardThreshold(mode));
+}
+
+function nudgeBoardThreshold(delta) {
+  const el = $("board-threshold");
+  if (!el || el.disabled) return;
+  const next = parseBoardThreshold(el.value) + delta;
+  setBoardThresholdValue(el, Math.min(10000, Math.max(0, next)));
+}
+
+function isTypedBoardInput(e) {
+  const t = e.inputType;
+  if (!t) return false;
+  return (t.startsWith("insert") && t !== "insertReplacementText") || t.startsWith("delete");
 }
 
 function sendLobbySettings() {
@@ -1137,13 +1162,35 @@ async function boot() {
     });
   });
   $("idle-timeout")?.addEventListener("change", sendLobbySettings);
-  $("board-threshold")?.addEventListener("change", () => {
-    const el = $("board-threshold");
-    if (el && String(el.value).trim() === "") {
-      el.value = String(defaultBoardThreshold());
-    }
-    sendLobbySettings();
-  });
+  const boardThreshold = $("board-threshold");
+  if (boardThreshold) {
+    boardThreshold.dataset.boardLast = boardThreshold.value;
+    boardThreshold.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      nudgeBoardThreshold(e.key === "ArrowUp" ? BOARD_THRESHOLD_NUDGE : -BOARD_THRESHOLD_NUDGE);
+      sendLobbySettings();
+    });
+    boardThreshold.addEventListener("input", (e) => {
+      if (!isTypedBoardInput(e)) {
+        const prev = Number(boardThreshold.dataset.boardLast);
+        const next = Number(boardThreshold.value);
+        if (Number.isFinite(prev) && Number.isFinite(next) && Math.abs(next - prev) === 1) {
+          const nudged = prev + (next - prev) * BOARD_THRESHOLD_NUDGE;
+          setBoardThresholdValue(boardThreshold, Math.min(10000, Math.max(0, nudged)));
+        }
+      }
+      boardThreshold.dataset.boardLast = boardThreshold.value;
+    });
+    boardThreshold.addEventListener("change", () => {
+      if (String(boardThreshold.value).trim() === "") {
+        setBoardThresholdValue(boardThreshold, defaultBoardThreshold());
+      } else {
+        boardThreshold.dataset.boardLast = boardThreshold.value;
+      }
+      sendLobbySettings();
+    });
+  }
 
   setInterval(renderTimer, 250);
   setInterval(requestSync, 1_000);
